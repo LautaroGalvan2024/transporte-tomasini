@@ -1,0 +1,63 @@
+name: Deploy Tomasini
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tomasini-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Verify and publish main
+    if: github.ref == 'refs/heads/main' && github.repository == 'LautaroGalvan2024/transporte-tomasini'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://tomasini.72-60-50-213.sslip.io
+    services:
+      postgres:
+        image: postgres:16.15-bookworm@sha256:e8a07d2c7579b038938cdba6c539e580e5001caf9ea203d397b5cc83e76bd938
+        env:
+          POSTGRES_USER: tomasini_ci_admin
+          POSTGRES_PASSWORD: ephemeral-runner-only
+          POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports:
+          - 127.0.0.1:55440:5432
+        options: >-
+          --health-cmd "pg_isready -U tomasini_ci_admin -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout the exact main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: npm ci --include=dev --no-audit --no-fund
+      - name: Validate, build and exercise the real database
+        run: node scripts/ci-check.mjs
+        env:
+          TOMASINI_CI_ADMIN_PASSWORD: ephemeral-runner-only
+      - name: Package and publish the verified commit
+        run: node scripts/ci-publish.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TOMASINI_DEPLOY_KEY: ${{ secrets.TOMASINI_DEPLOY_KEY }}
+          TOMASINI_DEPLOY_HOST: ${{ vars.TOMASINI_DEPLOY_HOST }}
+          TOMASINI_DEPLOY_USER: ${{ vars.TOMASINI_DEPLOY_USER }}
+          TOMASINI_DEPLOY_KNOWN_HOSTS: ${{ vars.TOMASINI_DEPLOY_KNOWN_HOSTS }}
