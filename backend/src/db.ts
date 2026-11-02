@@ -55,6 +55,26 @@ export async function assertDatabaseScope(db: PrismaClient = getDb()) {
   }
 }
 
+export function isRetryableTransactionError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code === "P2034") return true;
+  if (error.code !== "P2010") return false;
+  // Raw SQL keeps PostgreSQL's SQLSTATE in adapter metadata instead of P2034.
+  // Retry only aborted transactions, never constraints or uncertain outcomes.
+  const adapter = error.meta?.driverAdapterError;
+  const cause =
+    adapter && typeof adapter === "object" && "cause" in adapter
+      ? adapter.cause
+      : undefined;
+  const originalCode =
+    cause && typeof cause === "object" && "originalCode" in cause
+      ? cause.originalCode
+      : undefined;
+  return [error.meta?.code, originalCode].some(
+    (code) => code === "40001" || code === "40P01",
+  );
+}
+
 export async function transaction<T>(run: (tx: Tx) => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -64,12 +84,7 @@ export async function transaction<T>(run: (tx: Tx) => Promise<T>): Promise<T> {
         timeout: 15_000,
       });
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2034" &&
-        attempt < 2
-      )
-        continue;
+      if (isRetryableTransactionError(error) && attempt < 2) continue;
       throw error;
     }
   }
