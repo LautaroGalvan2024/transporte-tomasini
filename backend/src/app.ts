@@ -16,6 +16,7 @@ import { tripsRouter } from "./trips.js";
 import { obligationsRouter } from "./obligations.js";
 import { dashboardRouter } from "./dashboard.js";
 import { errorHandler } from "./errors.js";
+import { invitationsRouter, publicInvitationsRouter } from "./invitations.js";
 
 export function createApp() {
   const cfg = getConfig(),
@@ -61,18 +62,18 @@ export function createApp() {
     },
   );
   app.use("/api/auth", authRouter());
+  app.use("/api/invitations", publicInvitationsRouter());
   app.use("/api", authenticate, requireChangedPassword);
+  app.use("/api/invitations", invitationsRouter());
   app.use("/api/trucks", trucksRouter());
   app.use("/api/drivers", driversRouter());
   app.use("/api/trips", tripsRouter());
   app.use("/api/obligations", obligationsRouter());
   app.use("/api", dashboardRouter());
   app.use("/api", (_req, res) =>
-    res
-      .status(404)
-      .json({
-        error: { message: "No se encontró esta operación.", code: "NOT_FOUND" },
-      }),
+    res.status(404).json({
+      error: { message: "No se encontró esta operación.", code: "NOT_FOUND" },
+    }),
   );
   if (cfg.production) {
     const dir = fileURLToPath(new URL("../../frontend/dist/", import.meta.url));

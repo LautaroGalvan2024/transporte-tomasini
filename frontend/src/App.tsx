@@ -54,21 +54,13 @@ import {
   SettingsPage,
 } from "./pages/Admin";
 
-function Brand({ inverse = false }: { inverse?: boolean }) {
-  return (
-    <div className={`brand ${inverse ? "brand-inverse" : ""}`}>
-      <span className="brand-top">TRANSPORTE</span>
-      <span className="brand-name">
-        Tomasini<span className="brand-dot">.</span>
-      </span>
-    </div>
-  );
-}
+import { Brand } from "./Brand";
+import { JoinPage } from "./pages/Join";
 const destinations = [
   { id: "home", label: "Inicio", Icon: House },
   { id: "trips", label: "Viajes", Icon: Route },
   { id: "fleet", label: "Camiones", Icon: TruckIcon },
-  { id: "drivers", label: "Choferes", Icon: Users },
+  { id: "drivers", label: "Equipo", Icon: Users },
   { id: "obligations", label: "Vencimientos", Icon: CalendarDays },
   { id: "reports", label: "Reportes", Icon: FileSpreadsheet },
   { id: "settings", label: "Configuración", Icon: Settings2 },
@@ -88,7 +80,8 @@ export function App() {
     [dirtyForm, setDirtyForm] = useState(false),
     [pendingNavigation, setPendingNavigation] = useState<string | null>(null),
     [online, setOnline] = useState(navigator.onLine),
-    [reauth, setReauth] = useState(false);
+    [reauth, setReauth] = useState(false),
+    [joinRevision, setJoinRevision] = useState(0);
   const navigationRef = useRef({ page, dirtyForm });
   navigationRef.current = { page, dirtyForm };
   const check = useCallback(() => {
@@ -124,11 +117,14 @@ export function App() {
       setMobileMenu(false);
     };
     const expired = () => setReauth(true);
+    const invitationChanged = () => setJoinRevision((value) => value + 1);
     window.addEventListener("popstate", pop);
     window.addEventListener("tomasini:session-expired", expired);
+    window.addEventListener("hashchange", invitationChanged);
     return () => {
       window.removeEventListener("popstate", pop);
       window.removeEventListener("tomasini:session-expired", expired);
+      window.removeEventListener("hashchange", invitationChanged);
     };
   }, []);
   const performNavigate = useCallback((next: string) => {
@@ -190,8 +186,25 @@ export function App() {
     return (
       <div className="boot-screen">
         <Brand />
-        <Loading label="Preparando tu espacio…" />
+        <Loading label="Cargando…" />
       </div>
+    );
+  if (page === "join")
+    return (
+      <JoinPage
+        key={joinRevision}
+        currentUser={user}
+        onSignout={async () => {
+          try {
+            await send("/auth/logout", "POST");
+          } catch (error) {
+            if ((error as { status?: number }).status !== 401) throw error;
+          }
+          setUser(null);
+          setReauth(false);
+        }}
+        onLogin={() => performNavigate("home")}
+      />
     );
   if (!user)
     return (
@@ -305,9 +318,6 @@ export function App() {
         >
           <Brand />
         </button>
-        <div className="workspace-label">
-          {user.role === "ADMIN" ? "GESTIÓN DEL TRANSPORTE" : "MI ESPACIO"}
-        </div>
         <nav className="side-nav" aria-label="Navegación principal">
           {allowed.map(({ id, label, Icon }) => (
             <button
@@ -322,13 +332,6 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="sidebar-message">
-            <ShieldCheck size={20} />
-            <div>
-              <strong>Todo en un mismo lugar</strong>
-              <span>Tus viajes y tu camión, al día.</span>
-            </div>
-          </div>
           <button
             className="profile-button"
             onClick={() => navigate("account")}
@@ -350,14 +353,6 @@ export function App() {
       </aside>
       <div className="main-area">
         <header className="topbar">
-          <div className="desktop-breadcrumb">
-            Tu transporte<span>/</span>
-            <strong>
-              {isForm
-                ? "Cargar viaje"
-                : destinations.find((d) => d.id === page)?.label || "Mi cuenta"}
-            </strong>
-          </div>
           <button
             className="brand-button mobile-brand"
             onClick={() => navigate("home")}
@@ -388,15 +383,11 @@ export function App() {
         </header>
         <main
           id="main"
-          className={`main-content ${isForm ? "main-form" : ""}`}
+          className={`main-content main-page-${page} ${isForm ? "main-form" : ""}`}
           key={`${page}-${editTrip || ""}`}
         >
           {content()}
         </main>
-        <footer className="desktop-footer">
-          <span>Transporte Tomasini</span>
-          <span>Un viaje a la vez.</span>
-        </footer>
       </div>
       <nav className="mobile-nav" aria-label="Navegación móvil">
         {[
@@ -551,53 +542,17 @@ function Login({
   }
   return (
     <div className="login-page">
-      <section className="login-story">
-        <Brand inverse />
-        <div className="login-story-content">
-          <div className="story-eyebrow">
-            <span />
-            EN CADA KILÓMETRO
-          </div>
-          <h1>
-            El camino sigue.
-            <br />
-            <span>Todo está en orden.</span>
-          </h1>
-          <p>
-            Un lugar para tus viajes, tu camión
-            <br className="desktop-only" /> y lo que viene.
-          </p>
-          <div className="road-illustration" aria-hidden="true">
-            <div className="road-line" />
-            <div className="road-stop">
-              <span />
-              <small>Salida</small>
-            </div>
-            <div className="road-truck">
-              <TruckIcon size={48} strokeWidth={1.4} />
-            </div>
-            <div className="road-stop end">
-              <span />
-              <small>Destino</small>
-            </div>
-          </div>
-        </div>
-        <div className="login-story-footer">
-          <span>TRANSPORTE TOMASINI</span>
-          <span>Siempre en movimiento.</span>
-        </div>
+      <section className="login-identity">
+        <Brand />
+        <p>Tu carga, nuestro compromiso.</p>
       </section>
       <section className="login-panel">
         <div className="login-mobile-brand">
           <Brand />
         </div>
         <div className="login-form-wrap">
-          <span className="welcome-icon">
-            <Route size={27} />
-          </span>
           <div className="login-heading">
-            <h2>Qué bueno verte.</h2>
-            <p>Ingresá para tener todo a mano.</p>
+            <h1>Ingresar</h1>
           </div>
           {initialError && (
             <ErrorState message={initialError} onRetry={onRetry} />
@@ -659,22 +614,18 @@ function Login({
           <button className="login-help" onClick={() => setHelp(true)}>
             ¿Necesitás ayuda para ingresar?
           </button>
-          <div className="login-security">
-            <LockKeyhole size={15} />
-            <span>Tu información, segura y a mano.</span>
-          </div>
         </div>
-        <span className="login-copyright">
-          Transporte Tomasini · Gestión de viajes
-        </span>
       </section>
       {help && (
         <Modal title="Te ayudamos a ingresar" onClose={() => setHelp(false)}>
           <div className="modal-body">
-            <p>Usá el usuario y la contraseña que te entregó administración.</p>
             <p>
-              Si no los recordás, pedile al administrador que restablezca tu
-              acceso. Tus viajes van a seguir guardados.
+              Para crear tu cuenta, pedí un enlace de invitación a
+              administración.
+            </p>
+            <p>
+              Si ya tenés cuenta y no recordás la contraseña, administración
+              puede recuperar tu acceso.
             </p>
             <button className="button primary" onClick={() => setHelp(false)}>
               Entendido
@@ -691,158 +642,78 @@ function DriverHome(props: PageProps) {
   if (loading && !data) return <Loading />;
   if (error) return <ErrorState message={error} onRetry={refresh} />;
   if (!data) return null;
-  const truck = data.assignedTruck,
-    first = props.user.name.split(" ")[0];
+  const truck = data.assignedTruck;
+  const pending = data.obligations.filter((o) => o.status !== "OK");
   return (
-    <>
-      <div className="page-heading home-heading">
-        <div>
-          <span className="eyebrow">TU DÍA, MÁS SIMPLE</span>
-          <h1>
-            Hola, {first}
-            <span className="heading-dot">.</span>
-          </h1>
-          <p>Todo listo para seguir en camino.</p>
-        </div>
-        <span className="role-pill">
-          <UserRound size={16} />
-          Mi espacio
+    <div className="workspace-page driver-workspace">
+      <div className="workspace-heading">
+        <h1>Hola, {props.user.name.split(" ")[0]}</h1>
+        <button
+          className="button primary"
+          onClick={() => props.onNavigate("new-trip")}
+        >
+          <Plus size={20} />
+          Cargar viaje
+        </button>
+      </div>
+      <section className="vehicle-strip" aria-label="Camión habitual">
+        <span className="vehicle-symbol">
+          <TruckIcon size={30} />
         </span>
-      </div>
-      <div className="driver-overview">
-        <section className="journey-hero">
-          <div className="hero-content">
-            <span className="hero-eyebrow">
-              <Route size={17} />
-              CADA VIAJE CUENTA
-            </span>
-            <h2>
-              Terminaste un viaje.
-              <br />
-              Dejalo registrado.
-            </h2>
-            <p>
-              Unos pocos datos y ya está.
-              <br />
-              La distancia se calcula automáticamente.
-            </p>
-            <button
-              className="button white"
-              onClick={() => props.onNavigate("new-trip")}
-            >
-              <Plus size={21} />
-              Cargar viaje
-              <ArrowRight size={20} />
-            </button>
-          </div>
-          <div className="hero-art" aria-hidden="true">
-            <div className="hero-orbit orbit-one" />
-            <div className="hero-orbit orbit-two" />
-            <div className="hero-truck">
-              <TruckIcon size={84} strokeWidth={1.1} />
-            </div>
-            <span className="hero-point point-a" />
-            <span className="hero-point point-b" />
-          </div>
-        </section>
-        <section className="assigned-truck panel">
-          <div className="section-label">
-            <span>MI CAMIÓN</span>
-            <TruckIcon size={19} />
-          </div>
-          {truck ? (
-            <>
-              <div className="truck-plate">{truck.plate}</div>
-              <p className="truck-name">{truck.label}</p>
-              <div className="truck-mileage">
-                <Gauge size={21} />
-                <span>
-                  <strong>{formatKm(truck.odometer)}</strong>
-                  <small>km registrados</small>
-                </span>
-              </div>
-              <p className="reading-date">
-                Última lectura · {formatDate(truck.odometerAt)}
-              </p>
-            </>
-          ) : (
-            <div className="no-assignment">
-              <TruckIcon size={34} />
-              <h3>Todavía sin camión asignado</h3>
-              <p>Administración puede asignarte tu unidad habitual.</p>
-            </div>
-          )}
-        </section>
-      </div>
-      <div className="driver-stats">
-        <div>
-          <span className="stat-icon">
-            <Route size={22} />
-          </span>
-          <span>
-            <strong>{formatKm(data.stats.tripsThisMonth)}</strong>
-            <small>
-              {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"} este mes
-            </small>
-          </span>
-        </div>
-        <div>
-          <span className="stat-icon">
-            <Gauge size={22} />
-          </span>
-          <span>
-            <strong>
-              {formatKm(data.stats.kilometersThisMonth)} <em>km</em>
-            </strong>
-            <small>recorridos este mes</small>
-          </span>
-        </div>
-        <div>
-          <span className="stat-icon">
-            <CircleCheck size={22} />
-          </span>
-          <span>
-            <strong>Todo registrado</strong>
-            <small>Tu historial, siempre disponible</small>
-          </span>
-        </div>
-      </div>
-      <div className="home-bottom-grid">
-        <section className="panel recent-trips">
-          <div className="section-heading">
+        {truck ? (
+          <>
             <div>
-              <span className="eyebrow">TU RECORRIDO</span>
-              <h2>Últimos viajes</h2>
+              <strong>{truck.plate}</strong>
+              <span>{truck.label}</span>
             </div>
+            <div className="vehicle-reading">
+              <strong>{formatKm(truck.odometer)} km</strong>
+              <span>Última lectura · {formatDate(truck.odometerAt)}</span>
+            </div>
+          </>
+        ) : (
+          <div>
+            <strong>Sin camión asignado</strong>
+            <span>Pedí a administración que asigne tu unidad habitual.</span>
+          </div>
+        )}
+      </section>
+      <div className="month-summary" aria-label="Resumen del mes">
+        <span>Este mes</span>
+        <strong>
+          {formatKm(data.stats.tripsThisMonth)}{" "}
+          {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"}
+        </strong>
+        <strong>{formatKm(data.stats.kilometersThisMonth)} km</strong>
+      </div>
+      <div className="driver-ledger">
+        <section className="driver-recent">
+          <div className="section-heading">
+            <h2>Últimos viajes</h2>
             <button
               className="text-button"
               onClick={() => props.onNavigate("trips")}
             >
               Ver todos
-              <ArrowUpRight size={18} />
+              <ArrowUpRight size={17} />
             </button>
           </div>
           {data.recentTrips.length ? (
             <div className="recent-trip-list">
-              {data.recentTrips.slice(0, 4).map((t) => (
+              {data.recentTrips.slice(0, 3).map((t) => (
                 <button
                   className="recent-trip"
                   key={t.id}
                   onClick={() => props.onNavigate("trips")}
                 >
-                  <span className="trip-route-icon">
-                    <Route size={21} />
-                  </span>
                   <span className="recent-trip-main">
                     <strong>
                       {t.origin}
-                      <ArrowRight size={14} />
+                      <ArrowRight size={15} />
                       {t.destination}
                     </strong>
                     <small>
-                      {formatDate(t.departureAt)}
-                      <span>·</span>
-                      {t.truck.plate}
+                      {formatDate(t.departureAt)} · {t.truck.plate}
                     </small>
                   </span>
                   <span className="recent-trip-km">
@@ -855,52 +726,44 @@ function DriverHome(props: PageProps) {
             </div>
           ) : (
             <EmptyState
-              title="Tu historial empieza acá"
-              description="Cuando cargues tu primer viaje, lo vas a encontrar en este espacio."
-              icon={<Route size={28} />}
+              title="Todavía no cargaste viajes"
+              description="Usá Cargar viaje para registrar el primero."
             />
           )}
         </section>
-        <section className="panel driver-reminders">
+        <section className="driver-controls">
           <div className="section-heading">
-            <div>
-              <span className="eyebrow">PARA TENER A MANO</span>
-              <h2>Próximos controles</h2>
-            </div>
-            <CalendarDays size={22} />
+            <h2>Próximos controles</h2>
           </div>
-          {data.obligations
-            .filter((o) => o.status !== "OK")
-            .slice(0, 3)
-            .map((o) => (
-              <div className="reminder-row" key={o.id}>
+          {pending.length ? (
+            pending.slice(0, 2).map((o) => (
+              <div className="control-line" key={o.id}>
                 <StatusBadge status={o.status} />
                 <strong>{o.title}</strong>
-                <small>
+                <span>
                   {o.dueDate
                     ? formatDate(o.dueDate)
                     : o.dueKm
                       ? `${formatKm(o.dueKm)} km`
-                      : "Administración definirá el próximo control"}
-                </small>
+                      : "Pendiente de configurar"}
+                </span>
               </div>
-            ))}
-          {!data.obligations.some((o) => o.status !== "OK") && (
-            <div className="all-clear">
-              <span>
-                <ShieldCheck size={28} />
-              </span>
-              <h3>Sin pendientes cercanos</h3>
-              <p>Los próximos controles aparecerán acá.</p>
-            </div>
+            ))
+          ) : (
+            <p className="inline-clear">
+              <CircleCheck size={20} />
+              Sin vencimientos cercanos
+            </p>
           )}
-          <p className="reminders-foot">
-            <Clock3 size={15} />
-            Administración gestiona los vencimientos.
-          </p>
+          {pending.length > 2 && (
+            <p className="muted">
+              Administración gestiona otros {pending.length - 2} controles
+              pendientes.
+            </p>
+          )}
         </section>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -942,16 +805,11 @@ function Account({
     }
   }
   return (
-    <>
-      <div className="page-heading">
+    <div className="workspace-page account-workspace">
+      <div className="workspace-heading">
         <div>
-          <span className="eyebrow">TU ESPACIO</span>
           <h1>{required ? "Elegí tu contraseña" : "Mi cuenta"}</h1>
-          <p>
-            {required
-              ? "Tu acceso es personal. Cambiá la contraseña provisoria para continuar."
-              : "Tus datos y la seguridad de tu acceso."}
-          </p>
+          {required && <p>Cambiá la contraseña provisoria para continuar.</p>}
         </div>
       </div>
       <div className="account-layout">
@@ -1015,7 +873,7 @@ function Account({
           </button>
         </form>
       </div>
-    </>
+    </div>
   );
 }
 

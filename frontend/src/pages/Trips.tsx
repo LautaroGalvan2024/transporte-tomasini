@@ -40,6 +40,7 @@ import {
   Modal,
 } from "../ui";
 import { useData } from "../useData";
+import { useDesktopRows } from "../useDesktopRows";
 
 type TripFormValues = {
   truckId: string;
@@ -106,6 +107,7 @@ export function TripForm({
     [conflict, setConflict] = useState(false),
     [reloadConfirm, setReloadConfirm] = useState(false),
     [loadRevision, setLoadRevision] = useState(0);
+  const [view, setView] = useState<"trip" | "extras">("trip");
   const baseline = useRef<TripFormValues>(emptyValues());
   const initialized = useRef(false),
     requestId = useRef(crypto.randomUUID()),
@@ -222,6 +224,11 @@ export function TripForm({
     )
       invalid.allowance = "Ingresá un importe válido, mayor o igual a cero.";
     if (Object.keys(invalid).length) {
+      const mainErrors = Object.keys(invalid).some(
+        (k) => !["allowance", "notes"].includes(k),
+      );
+      setView(mainErrors ? "trip" : "extras");
+      if (!mainErrors) setExtra(true);
       setFields(invalid);
       setError("Revisá los campos señalados. Tus datos siguen acá.");
       setTimeout(() => errorRef.current?.focus(), 0);
@@ -267,6 +274,13 @@ export function TripForm({
           ? "No pudimos confirmar el guardado. Reintentá el mismo envío para comprobarlo sin duplicar el viaje."
           : err.message,
       );
+      if (err.fields) {
+        const mainErrors = Object.keys(err.fields).some(
+          (k) => !["allowance", "notes"].includes(k),
+        );
+        setView(mainErrors ? "trip" : "extras");
+        if (!mainErrors) setExtra(true);
+      }
       setFields(err.fields || {});
       setTimeout(() => errorRef.current?.focus(), 0);
     } finally {
@@ -296,16 +310,10 @@ export function TripForm({
         <div className="saved-icon">
           <CircleCheck size={46} />
         </div>
-        <span className="eyebrow">TODO LISTO</span>
         <h1>
           {tripId ? "Viaje actualizado" : "Viaje guardado"}
           <span className="heading-dot">.</span>
         </h1>
-        <p>
-          {tripId
-            ? "Los cambios ya quedaron registrados."
-            : "Ya quedó en tu historial. ¡Gracias por mantener todo al día!"}
-        </p>
         <div className="saved-summary panel">
           <span className="saved-route">
             <strong>{success.origin}</strong>
@@ -352,42 +360,50 @@ export function TripForm({
       </section>
     );
   return (
-    <>
-      <button
-        className="back-link"
-        onClick={() => (changed ? setLeave(true) : onCancel())}
-      >
-        <ArrowLeft size={18} />
-        Volver a viajes
-      </button>
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">
-            {tripId ? "ACTUALIZAR REGISTRO" : "UN VIAJE MÁS EN TU HISTORIAL"}
-          </span>
-          <h1>
-            {tripId ? "Editar viaje" : "Cargar viaje"}
-            <span className="heading-dot">.</span>
-          </h1>
-          <p>Contanos el recorrido. Los kilómetros los calculamos nosotros.</p>
-        </div>
-        <span className="form-context">
-          <Route size={19} />
-          {tripId ? "Edición" : "Nuevo registro"}
-        </span>
+    <div className="workspace-page trip-workspace">
+      <div className="workspace-heading">
+        <h1>{tripId ? "Editar viaje" : "Cargar viaje"}</h1>
+        <button
+          className="button ghost"
+          type="button"
+          onClick={() => (changed ? setLeave(true) : onCancel())}
+        >
+          <ArrowLeft size={18} />
+          Volver
+        </button>
       </div>
-      <form className="trip-form-layout" onSubmit={submit} noValidate>
-        <div className="trip-form-main">
-          <section className="panel trip-form-section">
-            <div className="form-section-title">
-              <span className="step-number">01</span>
-              <div>
-                <h2>El recorrido</h2>
-                <p>Desde dónde saliste y a dónde llegaste.</p>
-              </div>
-              <MapPin size={23} />
-            </div>
-            <div className="grid2 vehicle-fields">
+      <form
+        className="compact-trip-form"
+        data-view={view}
+        onSubmit={submit}
+        noValidate
+      >
+        <div
+          className="form-tabs trip-desktop-tabs"
+          aria-label="Secciones del viaje"
+        >
+          <button
+            type="button"
+            className={view === "trip" ? "active" : ""}
+            onClick={() => setView("trip")}
+          >
+            Datos del viaje
+          </button>
+          <button
+            type="button"
+            className={view === "extras" ? "active" : ""}
+            onClick={() => {
+              setView("extras");
+              setExtra(true);
+            }}
+          >
+            Viáticos y observaciones<span>Opcional</span>
+          </button>
+        </div>
+        <div className="trip-core">
+          <section className="trip-route-block">
+            <h2>Recorrido</h2>
+            <div className="grid2">
               {user.role === "ADMIN" ? (
                 <Field label="Chofer" error={fields.driverId}>
                   <select
@@ -415,17 +431,10 @@ export function TripForm({
               ) : (
                 <div className="driver-readonly">
                   <span className="field-label">Chofer</span>
-                  <span>
-                    {user.name}
-                    <span className="badge neutral">Vos</span>
-                  </span>
+                  <span>{user.name}</span>
                 </div>
               )}
-              <Field
-                label="Camión"
-                error={fields.truckId}
-                hint="Si viajaste con otra unidad, elegila acá."
-              >
+              <Field label="Camión" error={fields.truckId}>
                 <select
                   value={values.truckId}
                   onChange={(e) => set("truckId", e.target.value)}
@@ -442,56 +451,48 @@ export function TripForm({
                 </select>
               </Field>
             </div>
-            <div className="route-inputs">
+            <div className="grid2">
               <Field label="Salí de" error={fields.origin}>
-                <span className="input-icon">
-                  <span className="route-dot" />
-                  <input
-                    maxLength={120}
-                    placeholder="Localidad de salida"
-                    value={values.origin}
-                    onChange={(e) => set("origin", e.target.value)}
-                    disabled={blocked}
-                  />
-                </span>
+                <input
+                  maxLength={120}
+                  placeholder="Localidad de salida"
+                  value={values.origin}
+                  onChange={(e) => set("origin", e.target.value)}
+                  disabled={blocked}
+                />
               </Field>
-              <span className="route-connector">
-                <ArrowRight size={19} />
-              </span>
               <Field label="Llegué a" error={fields.destination}>
-                <span className="input-icon">
-                  <MapPin size={19} />
-                  <input
-                    maxLength={120}
-                    placeholder="Localidad de llegada"
-                    value={values.destination}
-                    onChange={(e) => set("destination", e.target.value)}
-                    disabled={blocked}
-                  />
-                </span>
+                <input
+                  maxLength={120}
+                  placeholder="Localidad de llegada"
+                  value={values.destination}
+                  onChange={(e) => set("destination", e.target.value)}
+                  disabled={blocked}
+                />
               </Field>
             </div>
             {routes.length > 0 && (
-              <div className="recent-routes">
-                <span>¿Repetiste un recorrido?</span>
-                <div>
-                  {routes.map((r, i) => (
-                    <button
-                      type="button"
-                      key={i}
-                      className="route-chip"
-                      disabled={blocked}
-                      onClick={() => {
-                        set("origin", r.origin);
-                        set("destination", r.destination);
-                      }}
-                    >
-                      {r.origin}
-                      <ArrowRight size={13} />
-                      {r.destination}
-                    </button>
-                  ))}
-                </div>
+              <div className="recent-route-select">
+                <Field label="Usar un recorrido reciente">
+                  <select
+                    value=""
+                    disabled={blocked}
+                    onChange={(e) => {
+                      const route = routes[Number(e.target.value)];
+                      if (route) {
+                        set("origin", route.origin);
+                        set("destination", route.destination);
+                      }
+                    }}
+                  >
+                    <option value="">Elegí un recorrido</option>
+                    {routes.map((r, i) => (
+                      <option key={i} value={i}>
+                        {r.origin} → {r.destination}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               </div>
             )}
             <div className="grid2 date-fields">
@@ -517,33 +518,19 @@ export function TripForm({
               </Field>
             </div>
           </section>
-          <section className="panel trip-form-section">
-            <div className="form-section-title">
-              <span className="step-number">02</span>
-              <div>
-                <h2>Los kilómetros</h2>
-                <p>Lo que marcaba el odómetro del camión.</p>
-              </div>
-              <Gauge size={24} />
-            </div>
+          <section className="trip-km-block">
+            <h2>Kilómetros</h2>
             {truck && (
               <div className="odometer-reference">
                 <Info size={18} />
                 <span>
-                  Última lectura registrada:{" "}
-                  <strong>{formatKm(truck.odometer)} km</strong>
-                  <small>
-                    {formatDate(truck.odometerAt)} · Usala como referencia.
-                  </small>
+                  Última lectura: <strong>{formatKm(truck.odometer)} km</strong>
+                  <small>{formatDate(truck.odometerAt)}</small>
                 </span>
               </div>
             )}
             <div className="grid2">
-              <Field
-                label="Al salir"
-                error={fields.startKm}
-                hint="Kilometraje inicial"
-              >
+              <Field label="Odómetro al salir" error={fields.startKm}>
                 <span className="input-suffix">
                   <input
                     inputMode="numeric"
@@ -556,11 +543,7 @@ export function TripForm({
                   <span>km</span>
                 </span>
               </Field>
-              <Field
-                label="Al llegar"
-                error={fields.endKm}
-                hint="Kilometraje final"
-              >
+              <Field label="Odómetro al llegar" error={fields.endKm}>
                 <span className="input-suffix">
                   <input
                     inputMode="numeric"
@@ -578,61 +561,51 @@ export function TripForm({
               className={`calculated-distance ${km !== null && km >= 0 ? "has-distance" : ""}`}
               aria-live="polite"
             >
-              <span>
-                <Route size={22} />
-                Distancia del viaje
-              </span>
+              <span>Distancia</span>
               <strong>
                 {km !== null && km >= 0 ? formatKm(km) : "—"}
                 <small> km</small>
               </strong>
             </div>
           </section>
-          <section className="panel optional-section">
-            <button
-              type="button"
-              className="optional-toggle"
-              onClick={() => setExtra(!extra)}
-              aria-expanded={extra}
-            >
-              <span>
-                <Plus size={20} />
-                <strong>Agregar viáticos u observaciones</strong>
-                <small>Opcional</small>
-              </span>
-              <ChevronDown className={extra ? "rotate" : ""} size={20} />
-            </button>
-            {extra && (
-              <div className="optional-fields">
-                <Field
-                  label="Viáticos"
-                  error={fields.allowance}
-                  hint="Importe total en pesos. Si no corresponde, dejalo vacío."
-                >
-                  <span className="input-prefix">
-                    <span>$</span>
-                    <input
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={values.allowance}
-                      onChange={(e) => set("allowance", e.target.value)}
-                      disabled={blocked}
-                    />
-                  </span>
-                </Field>
-                <Field label="Observaciones" error={fields.notes}>
-                  <textarea
-                    rows={3}
-                    maxLength={2000}
-                    placeholder="Algo que quieras dejar anotado de este viaje…"
-                    value={values.notes}
-                    onChange={(e) => set("notes", e.target.value)}
-                    disabled={blocked}
-                  />
-                </Field>
-              </div>
-            )}
-          </section>
+        </div>
+        <button
+          type="button"
+          className="optional-toggle trip-mobile-extra-toggle"
+          onClick={() => setExtra(!extra)}
+          aria-expanded={extra}
+        >
+          <span>
+            <Plus size={20} />
+            <strong>Viáticos y observaciones</strong>
+          </span>
+          <ChevronDown size={20} />
+        </button>
+        <section className={`trip-extra-fields ${extra ? "expanded" : ""}`}>
+          <Field label="Viáticos (ARS)" error={fields.allowance}>
+            <span className="input-prefix">
+              <span>$</span>
+              <input
+                inputMode="decimal"
+                placeholder="0,00"
+                value={values.allowance}
+                onChange={(e) => set("allowance", e.target.value)}
+                disabled={blocked}
+              />
+            </span>
+          </Field>
+          <Field label="Observaciones" error={fields.notes}>
+            <textarea
+              rows={4}
+              maxLength={2000}
+              placeholder="Información adicional del viaje"
+              value={values.notes}
+              onChange={(e) => set("notes", e.target.value)}
+              disabled={blocked}
+            />
+          </Field>
+        </section>
+        <div className="compact-trip-footer">
           {error && (
             <div
               className="form-error"
@@ -642,83 +615,34 @@ export function TripForm({
             >
               {error}
               {conflict && (
-                <div>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => setReloadConfirm(true)}
-                  >
-                    Cargar la versión actual
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setReloadConfirm(true)}
+                >
+                  Cargar la versión actual
+                </button>
               )}
             </div>
           )}
-          <div className="trip-save-bar">
-            <span>
-              <ShieldSmall />
-              Tus datos se guardan de forma segura.
-            </span>
-            <button className="button primary" type="submit" disabled={busy}>
-              {busy ? (
-                <>
-                  <LoaderCircle className="spin" size={20} />
-                  Guardando…
-                </>
-              ) : (
-                <>
-                  <Check size={20} />
-                  {pendingBody
-                    ? "Reintentar guardado"
-                    : tripId
-                      ? "Guardar cambios"
-                      : "Guardar viaje"}
-                </>
-              )}
-            </button>
-          </div>
+          <button className="button primary" type="submit" disabled={busy}>
+            {busy ? (
+              <>
+                <LoaderCircle className="spin" size={20} />
+                Guardando…
+              </>
+            ) : (
+              <>
+                <Check size={20} />
+                {pendingBody
+                  ? "Reintentar guardado"
+                  : tripId
+                    ? "Guardar cambios"
+                    : "Guardar viaje"}
+              </>
+            )}
+          </button>
         </div>
-        <aside className="trip-summary panel">
-          <span className="summary-icon">
-            <ClipboardList size={25} />
-          </span>
-          <h3>Tu viaje, de un vistazo</h3>
-          <p>Revisá estos datos antes de guardar.</p>
-          <div className="summary-route">
-            <span>
-              <i />
-              {values.origin || "Lugar de salida"}
-            </span>
-            <span className="summary-route-line" />
-            <span>
-              <MapPin size={17} />
-              {values.destination || "Lugar de llegada"}
-            </span>
-          </div>
-          <div className="summary-detail">
-            <span>Camión</span>
-            <strong>{truck?.plate || "Por elegir"}</strong>
-          </div>
-          <div className="summary-detail">
-            <span>Distancia</span>
-            <strong>
-              {km !== null && km >= 0 ? `${formatKm(km)} km` : "Por completar"}
-            </strong>
-          </div>
-          {values.allowance !== "" && (
-            <div className="summary-detail">
-              <span>Viáticos</span>
-              <strong>{formatMoney(values.allowance.replace(",", "."))}</strong>
-            </div>
-          )}
-          <div className="summary-tip">
-            <Info size={18} />
-            <span>
-              Podés corregir el viaje mientras administración no lo haya
-              revisado.
-            </span>
-          </div>
-        </aside>
       </form>
       {reloadConfirm && (
         <Modal
@@ -775,11 +699,128 @@ export function TripForm({
           </div>
         </Modal>
       )}
-    </>
+    </div>
   );
 }
 function ShieldSmall() {
   return <CircleCheck size={16} />;
+}
+
+type TripAuditEvent = {
+  id: string;
+  action: string;
+  createdAt: string;
+  actor?: { name: string } | null;
+  reason?: string | null;
+};
+// Every character remains available: pages split at whitespace without trimming.
+function paginateDetailText(
+  text: string,
+  maxChars = 420,
+  maxBreaks = 6,
+): string[] {
+  if (!text) return [];
+  const pages: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + maxChars, text.length);
+    let breaks = 0;
+    for (let index = start; index < end; index++) {
+      if (text[index] === "\n" && ++breaks === maxBreaks) {
+        end = index + 1;
+        break;
+      }
+    }
+    if (end < text.length && text[end - 1] !== "\n") {
+      const candidate = text.slice(start, end);
+      const lastSpace = Math.max(
+        candidate.lastIndexOf(" "),
+        candidate.lastIndexOf("\n"),
+      );
+      if (lastSpace >= candidate.length * 0.65) end = start + lastSpace + 1;
+      if (
+        /^[\uDC00-\uDFFF]$/.test(text[end]) &&
+        /^[\uD800-\uDBFF]$/.test(text[end - 1])
+      )
+        end--;
+    }
+    pages.push(text.slice(start, end));
+    start = end;
+  }
+  return pages;
+}
+function paginateTripHistory(events: TripAuditEvent[]) {
+  const pages: {
+    event: TripAuditEvent;
+    reason: string;
+    part: number;
+    parts: number;
+  }[][] = [];
+  let short: (typeof pages)[number] = [];
+  const flush = () => {
+    if (short.length) {
+      pages.push(short);
+      short = [];
+    }
+  };
+  for (const event of events) {
+    const reason = event.reason || "";
+    const long = reason.length > 110 || reason.includes("\n");
+    if (long) {
+      flush();
+      const parts = paginateDetailText(reason);
+      parts.forEach((text, index) =>
+        pages.push([
+          { event, reason: text, part: index + 1, parts: parts.length },
+        ]),
+      );
+    } else {
+      short.push({ event, reason, part: 1, parts: 1 });
+      if (short.length === 3) flush();
+    }
+  }
+  flush();
+  return pages;
+}
+function TripDetailPager({
+  page,
+  total,
+  onPage,
+  label = "Página",
+}: {
+  page: number;
+  total: number;
+  onPage: (page: number) => void;
+  label?: string;
+}) {
+  if (total <= 1) return null;
+  return (
+    <div className="trip-detail-pagination">
+      <span>
+        {label} {page + 1} de {total}
+      </span>
+      <div>
+        <button
+          type="button"
+          className="button ghost"
+          aria-label="Página anterior"
+          disabled={page === 0}
+          onClick={() => onPage(page - 1)}
+        >
+          <ChevronLeft size={19} />
+        </button>
+        <button
+          type="button"
+          className="button ghost"
+          aria-label="Página siguiente"
+          disabled={page >= total - 1}
+          onClick={() => onPage(page + 1)}
+        >
+          <ChevronRight size={19} />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function TripsPage({
@@ -800,12 +841,19 @@ export function TripsPage({
     [reason, setReason] = useState(""),
     [actionError, setActionError] = useState(""),
     [busy, setBusy] = useState(false),
-    [history, setHistory] = useState<{ items: any[] } | null>(null),
-    [showHistory, setShowHistory] = useState(false),
+    [history, setHistory] = useState<{ items: TripAuditEvent[] } | null>(null),
+    [detailTab, setDetailTab] = useState<"data" | "notes" | "history">("data"),
+    [historyPage, setHistoryPage] = useState(0),
+    [notesPage, setNotesPage] = useState(0),
     [historyError, setHistoryError] = useState("");
+  const historyRequest = useRef(0);
+  const historyPages = paginateTripHistory(history?.items || []);
+  const notesPages = paginateDetailText(detail?.notes || "");
+  const pageSize = useDesktopRows(filters ? 470 : 360);
+  useEffect(() => setPage(1), [pageSize]);
   const query = new URLSearchParams({
     page: String(page),
-    pageSize: "15",
+    pageSize: String(pageSize),
     ...(from ? { from } : {}),
     ...(to ? { to } : {}),
     ...(truckId ? { truckId } : {}),
@@ -831,6 +879,8 @@ export function TripsPage({
         version: t.version,
       });
       setDetail(updated);
+      setHistory(null);
+      if (detailTab === "history") void viewHistory(updated);
       refresh();
       onNotify("Viaje marcado como revisado.");
     } catch (e) {
@@ -861,47 +911,51 @@ export function TripsPage({
     }
   }
   async function viewHistory(t: Trip) {
-    setShowHistory(true);
+    const request = ++historyRequest.current;
+    setDetailTab("history");
+    setHistoryPage(0);
     setHistory(null);
     setHistoryError("");
     try {
-      setHistory(await api(`/trips/${t.id}/history`));
+      const result = await api<{ items: TripAuditEvent[] }>(
+        `/trips/${t.id}/history`,
+      );
+      if (request === historyRequest.current) setHistory(result);
     } catch (e) {
-      setHistoryError((e as Error).message);
+      if (request === historyRequest.current)
+        setHistoryError((e as Error).message);
     }
   }
+  function closeDetail() {
+    if (busy) return;
+    historyRequest.current++;
+    setDetail(null);
+  }
   function openDetail(t: Trip) {
+    historyRequest.current++;
     setDetail(t);
-    setShowHistory(false);
+    setDetailTab("data");
+    setHistoryPage(0);
+    setNotesPage(0);
     setHistory(null);
+    setHistoryError("");
     setActionError("");
   }
   return (
-    <>
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">CADA RECORRIDO, EN SU LUGAR</span>
-          <h1>
-            {user.role === "ADMIN" ? "Viajes" : "Mis viajes"}
-            <span className="heading-dot">.</span>
-          </h1>
-          <p>
-            {user.role === "ADMIN"
-              ? "El movimiento de tu transporte, con todos los detalles."
-              : "Tu historial de recorridos, siempre a mano."}
-          </p>
-        </div>
+    <div className="workspace-page trips-workspace">
+      <div className="workspace-heading">
+        <h1>{user.role === "ADMIN" ? "Viajes" : "Mis viajes"}</h1>
         <button className="button primary" onClick={onNew}>
-          <Plus size={21} />
+          <Plus size={20} />
           Cargar viaje
         </button>
       </div>
       <section className="panel trip-list-panel">
         <div className="list-toolbar">
           <div className="list-toolbar-title">
-            <Route size={22} />
-            <h2>Historial de viajes</h2>
-            <span className="count-pill">{data?.total || 0}</span>
+            <h2>
+              {data?.total || 0} {(data?.total || 0) === 1 ? "viaje" : "viajes"}
+            </h2>
           </div>
           <button
             className={`button secondary filter-toggle ${activeFilters ? "filter-active" : ""}`}
@@ -987,9 +1041,6 @@ export function TripsPage({
         )}
         {data && (
           <div className="list-totals">
-            <span>
-              <strong>{formatKm(data.totals.count)}</strong> viajes
-            </span>
             <span>
               <strong>{formatKm(data.totals.distanceKm)}</strong> km recorridos
             </span>
@@ -1146,12 +1197,12 @@ export function TripsPage({
             title={
               activeFilters
                 ? "No encontramos viajes con estos filtros"
-                : "Tu próximo viaje empieza este historial"
+                : "Todavía no hay viajes"
             }
             description={
               activeFilters
                 ? "Probá otro período o limpiá los filtros."
-                : "Cargá un recorrido y tené sus datos siempre a mano."
+                : "Usá Cargar viaje para registrar el primero."
             }
             icon={<Route size={30} />}
           >
@@ -1165,72 +1216,197 @@ export function TripsPage({
         )}
       </section>
       {detail && (
-        <Modal title="Detalle del viaje" onClose={() => setDetail(null)} wide>
-          <div className="modal-body">
-            <div className="detail-route">
-              <span>
-                <span className="eyebrow">SALIDA</span>
-                <strong>{detail.origin}</strong>
-                <small>{formatDate(detail.departureAt, true)}</small>
-              </span>
-              <ArrowRight size={24} />
-              <span>
-                <span className="eyebrow">LLEGADA</span>
-                <strong>{detail.destination}</strong>
-                <small>{formatDate(detail.arrivalAt, true)}</small>
-              </span>
+        <Modal
+          title="Detalle del viaje"
+          onClose={closeDetail}
+          dismissible={!busy}
+          wide
+        >
+          <div className="trip-detail-body">
+            <div
+              className="trip-detail-tabs"
+              aria-label="Información del viaje"
+            >
+              <button
+                type="button"
+                className={detailTab === "data" ? "active" : ""}
+                aria-pressed={detailTab === "data"}
+                onClick={() => setDetailTab("data")}
+              >
+                Datos
+              </button>
+              {detail.notes && (
+                <button
+                  type="button"
+                  className={detailTab === "notes" ? "active" : ""}
+                  aria-pressed={detailTab === "notes"}
+                  onClick={() => setDetailTab("notes")}
+                >
+                  Observaciones
+                </button>
+              )}
+              <button
+                type="button"
+                className={detailTab === "history" ? "active" : ""}
+                aria-pressed={detailTab === "history"}
+                onClick={() =>
+                  history ? setDetailTab("history") : void viewHistory(detail)
+                }
+              >
+                <History size={16} />
+                Historial
+              </button>
             </div>
-            <div className="detail-km">
-              <Gauge size={25} />
-              <strong>
-                {formatKm(detail.distanceKm)} <small>km recorridos</small>
-              </strong>
-              <TripStatus trip={detail} />
+            <div className="trip-detail-content" aria-live="polite">
+              {detailTab === "data" && (
+                <>
+                  <div className="trip-detail-route">
+                    <div>
+                      <span>Salida</span>
+                      <strong>{detail.origin}</strong>
+                      <small>{formatDate(detail.departureAt, true)}</small>
+                    </div>
+                    <ArrowRight size={21} />
+                    <div>
+                      <span>Llegada</span>
+                      <strong>{detail.destination}</strong>
+                      <small>{formatDate(detail.arrivalAt, true)}</small>
+                    </div>
+                  </div>
+                  <div className="trip-detail-distance">
+                    <div>
+                      <Gauge size={21} />
+                      <strong>
+                        {formatKm(detail.distanceKm)} <small>km</small>
+                      </strong>
+                    </div>
+                    <TripStatus trip={detail} />
+                  </div>
+                  <dl className="trip-detail-data">
+                    <div>
+                      <dt>Chofer</dt>
+                      <dd>{detail.driver.name}</dd>
+                    </div>
+                    <div>
+                      <dt>Camión</dt>
+                      <dd>
+                        {detail.truck.plate}
+                        <small>{detail.truck.label}</small>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Viáticos</dt>
+                      <dd>{formatMoney(detail.allowance)}</dd>
+                    </div>
+                    <div>
+                      <dt>Odómetro al salir</dt>
+                      <dd>{formatKm(detail.startKm)} km</dd>
+                    </div>
+                    <div>
+                      <dt>Odómetro al llegar</dt>
+                      <dd>{formatKm(detail.endKm)} km</dd>
+                    </div>
+                    <div>
+                      <dt>Registrado</dt>
+                      <dd>{formatDate(detail.createdAt, true)}</dd>
+                    </div>
+                  </dl>
+                </>
+              )}
+              {detailTab === "notes" && (
+                <div className="trip-detail-reading">
+                  <p className="trip-detail-long-text">
+                    {notesPages[notesPage]}
+                  </p>
+                  <TripDetailPager
+                    page={notesPage}
+                    total={notesPages.length}
+                    onPage={setNotesPage}
+                  />
+                </div>
+              )}
+              {detailTab === "history" && (
+                <div className="trip-detail-history">
+                  {historyError ? (
+                    <div className="trip-detail-history-error">
+                      <p className="form-error" role="alert">
+                        {historyError}
+                      </p>
+                      <button
+                        className="button secondary"
+                        onClick={() => viewHistory(detail)}
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  ) : !history ? (
+                    <Loading label="Buscando cambios…" />
+                  ) : history.items.length ? (
+                    <>
+                      <div className="trip-detail-events">
+                        {historyPages[historyPage]?.map(
+                          ({ event, reason, part, parts }) => (
+                            <article key={`${event.id}-${part}`}>
+                              <span className="trip-detail-audit-dot" />
+                              <div>
+                                <strong>
+                                  {(
+                                    {
+                                      CREATED: "Viaje registrado",
+                                      UPDATED: "Viaje corregido",
+                                      REVIEWED: "Viaje revisado",
+                                      CANCELLED: "Viaje anulado",
+                                    } as Record<string, string>
+                                  )[event.action] ||
+                                    event.action ||
+                                    "Cambio registrado"}
+                                </strong>
+                                <small>
+                                  {formatDate(event.createdAt, true)}
+                                  {event.actor?.name
+                                    ? ` · ${event.actor.name}`
+                                    : ""}
+                                </small>
+                                {reason && (
+                                  <>
+                                    <p className="trip-detail-long-text">
+                                      {reason}
+                                    </p>
+                                    {parts > 1 && (
+                                      <span className="trip-detail-part">
+                                        Motivo · parte {part} de {parts}
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </article>
+                          ),
+                        )}
+                      </div>
+                      <TripDetailPager
+                        page={historyPage}
+                        total={historyPages.length}
+                        onPage={setHistoryPage}
+                      />
+                    </>
+                  ) : (
+                    <EmptyState title="Sin cambios adicionales" />
+                  )}
+                </div>
+              )}
             </div>
-            <dl className="detail-grid">
-              <div>
-                <dt>Chofer</dt>
-                <dd>{detail.driver.name}</dd>
-              </div>
-              <div>
-                <dt>Camión</dt>
-                <dd>
-                  {detail.truck.plate} · {detail.truck.label}
-                </dd>
-              </div>
-              <div>
-                <dt>Odómetro al salir</dt>
-                <dd>{formatKm(detail.startKm)} km</dd>
-              </div>
-              <div>
-                <dt>Odómetro al llegar</dt>
-                <dd>{formatKm(detail.endKm)} km</dd>
-              </div>
-              <div>
-                <dt>Viáticos</dt>
-                <dd>{formatMoney(detail.allowance)}</dd>
-              </div>
-              <div>
-                <dt>Registrado</dt>
-                <dd>{formatDate(detail.createdAt, true)}</dd>
-              </div>
-            </dl>
-            {detail.notes && (
-              <div className="detail-notes">
-                <h3>Observaciones</h3>
-                <p>{detail.notes}</p>
-              </div>
-            )}
             {actionError && (
-              <div className="form-error" role="alert">
+              <div className="trip-detail-action-error form-error" role="alert">
                 {actionError}
               </div>
             )}
-            <div className="detail-actions">
+            <div className="trip-detail-actions">
               {detail.status === "ACTIVE" &&
                 (user.role === "ADMIN" || !detail.reviewedAt) && (
                   <button
                     className="button secondary"
+                    disabled={busy}
                     onClick={() => onEdit(detail.id)}
                   >
                     <FilePenLine size={18} />
@@ -1252,6 +1428,7 @@ export function TripsPage({
               {user.role === "ADMIN" && detail.status === "ACTIVE" && (
                 <button
                   className="button ghost danger-text"
+                  disabled={busy}
                   onClick={() => {
                     setCancel(detail);
                     setActionError("");
@@ -1260,57 +1437,24 @@ export function TripsPage({
                   Anular viaje
                 </button>
               )}
+              {detail.status !== "ACTIVE" ||
+              (user.role !== "ADMIN" && detail.reviewedAt) ? (
+                <button className="button secondary" onClick={closeDetail}>
+                  Cerrar
+                </button>
+              ) : null}
             </div>
-            <button
-              className="history-toggle text-button"
-              onClick={() =>
-                showHistory ? setShowHistory(false) : viewHistory(detail)
-              }
-            >
-              <History size={17} />
-              {showHistory ? "Ocultar historial" : "Ver historial de cambios"}
-            </button>
-            {showHistory && (
-              <div className="audit-history">
-                {historyError ? (
-                  <p className="form-error">{historyError}</p>
-                ) : !history ? (
-                  <Loading label="Buscando cambios…" />
-                ) : history.items.length ? (
-                  history.items.map((event: any, i: number) => (
-                    <div key={event.id || i}>
-                      <span className="audit-dot" />
-                      <div>
-                        <strong>
-                          {(
-                            {
-                              CREATED: "Viaje registrado",
-                              UPDATED: "Viaje corregido",
-                              REVIEWED: "Viaje revisado",
-                              CANCELLED: "Viaje anulado",
-                            } as Record<string, string>
-                          )[event.action] ||
-                            event.action ||
-                            "Cambio registrado"}
-                        </strong>
-                        <small>
-                          {formatDate(event.createdAt, true)}
-                          {event.actor?.name ? ` · ${event.actor.name}` : ""}
-                        </small>
-                        {event.reason && <p>{event.reason}</p>}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p>Sin cambios adicionales.</p>
-                )}
-              </div>
-            )}
           </div>
         </Modal>
       )}
       {cancel && (
-        <Modal title="Anular viaje" onClose={() => setCancel(null)}>
+        <Modal
+          title="Anular viaje"
+          onClose={() => {
+            if (!busy) setCancel(null);
+          }}
+          dismissible={!busy}
+        >
           <form className="modal-body" onSubmit={cancelTrip}>
             <p>
               El viaje se quitará de los totales y se recalculará el
@@ -1337,6 +1481,7 @@ export function TripsPage({
                 type="button"
                 className="button secondary"
                 onClick={() => setCancel(null)}
+                disabled={busy}
               >
                 Volver
               </button>
@@ -1347,7 +1492,7 @@ export function TripsPage({
           </form>
         </Modal>
       )}
-    </>
+    </div>
   );
 }
 function TripStatus({ trip }: { trip: Trip }) {

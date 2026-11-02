@@ -89,7 +89,7 @@ export const requireChangedPassword: RequestHandler = (req, _res, next) => {
 };
 
 const limits = new Map<string, { count: number; until: number }>();
-function throttle(key: string, maximum: number) {
+export function throttle(key: string, maximum: number) {
   const now = Date.now();
   if (limits.size > 10_000)
     for (const [k, v] of limits) if (v.until < now) limits.delete(k);

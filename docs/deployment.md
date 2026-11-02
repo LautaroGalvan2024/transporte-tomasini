@@ -76,6 +76,29 @@ Este comando valida recibo y huella, restaura solamente en `tomasini_prod_restor
 
 Ante una falla, se detienen únicamente las unidades nuevas, se deshabilitan sus roles y se retira el enlace del virtual host nuevo. El bloque HBA se revierte solo cuando el archivo aún coincide exactamente con la modificación de esta ejecución. Se conservan la base, el release, certificados y el estado de error para revisar; no se resetea ni borra información. No se intenta reparar ni reiniciar Mozzi o Horizontes.
 
+## Actualizar la aplicación existente
+
+Para la ampliación aditiva de invitaciones, usar `infra/update_vps.py` y los launchers de actualización. El instalador inicial no sirve para actualizar una aplicación con datos.
+
+Después de verificar y compilar el código final:
+
+```powershell
+node scripts/package-update.mjs --previous-manifest=".local/releases/tomasini-2026-11-02T14-30-57-695Z.tar.gz.json"
+& '.\scripts\start-update.ps1' -UpdateManifest '<ruta del archivo .update.json generado>'
+```
+
+El plan generado registra el hash exacto de las versiones anterior/nueva, el esquema y cada migración. Rechaza cambios en SQL ya publicado. Esta revisión permite exclusivamente `202611020002_invitations`: crea la tabla, índices y relaciones nuevas, compatible con el código anterior. Un cambio destructivo o una ampliación diferente requiere un plan revisado.
+
+El actualizador verifica la versión activa, el historial SQL y los servicios existentes antes de preparar un nuevo release. Instala dependencias y genera Prisma bajo cuotas; no entrega la configuración ni credenciales de producción a npm. Antes de migrar crea un respaldo nuevo `update-<hash>-before.dump`, separado de las copias diarias y validado con su SHA-256 y el listado de `pg_restore`.
+
+La migración se ejecuta con una identidad Linux transitoria distinta de la aplicación y un archivo de ambiente root 0600. Se habilita temporalmente el rol `tomasini_prod_migrator` y se revocan LOGIN, contraseña y sesiones propias al terminar, incluso ante errores. El archivo temporal se retira. No se crean usuarios iniciales ni se ejecutan semillas.
+
+El release nuevo queda propiedad de root y sin escritura para el proceso de aplicación. El cambio de `current` es atómico y se reinicia únicamente `tomasini.service`. Se comprueban readiness, HTML/assets publicados, preservación de usuarios/datos, la misma huella de `api.env` —incluido cualquier SMTP configurado por el usuario— y los PID/configuraciones/respuestas de Mozzi y Horizontes. No se modifica HBA, Nginx, certificados ni unidades de servicios durante esta actualización.
+
+Si falla después de activar código nuevo, se restablece el enlace anterior y se reinicia únicamente Tomasini. No se ejecuta SQL inverso ni se restaura automáticamente una base encima de datos actuales: la ampliación aditiva permanece compatible con el release anterior. Ambos releases, el respaldo y la evidencia se conservan para revisión.
+
+Una única autenticación sudo cubre actualización y entrega. Se descargan recibo, evidencia antes/después, plan y respaldo previo con ACL privada; no se vuelve a exportar la credencial inicial. El estado local queda en `.local/deployments/<hash-corto>/state.json`. El respaldo previo se verifica con `scripts/restore-production-backup.mjs` en el cluster local exclusivo. Ante un fallo, el actualizador prepara diagnóstico redactado privado para que pueda revisarse sin otra autenticación sudo.
+
 ## Correo, respaldos y operación
 
 - `tomasini-notifications.timer` despierta cada 15 minutos. El backend decide cuándo corresponde el resumen de las 08:00 de Argentina y maneja reintentos/deduplicación. Configurar `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM` en `api.env` con editor/entrada privada; no enviarlas por chat ni versionarlas. Hasta completar y probar SMTP, los avisos externos no están operativos.

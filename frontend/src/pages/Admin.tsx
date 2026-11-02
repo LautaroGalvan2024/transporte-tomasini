@@ -2,15 +2,15 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
-  Bell,
   CalendarDays,
   Check,
   CheckCircle2,
-  ChevronDown,
+  Copy,
+  Link2,
+  X,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
-  Clock3,
   FileCheck2,
   Gauge,
   History,
@@ -22,13 +22,14 @@ import {
   ShieldCheck,
   Truck as TruckIcon,
   UserRound,
-  UsersRound,
   Wrench,
 } from "lucide-react";
 import { api, send, ApiError } from "../api";
 import type {
   Dashboard,
   Driver,
+  Invitation,
+  InvitationList,
   Notification,
   Obligation,
   PageProps,
@@ -127,27 +128,87 @@ function useLoad<T>(path: string) {
   return { data, loading, error, reload: () => setRevision((v) => v + 1) };
 }
 
-function PageHeading({
-  eyebrow,
-  title,
-  description,
-  action,
-}: {
-  eyebrow?: string;
-  title: string;
-  description?: string;
-  action?: ReactNode;
-}) {
+function PageHeading({ title, action }: { title: string; action?: ReactNode }) {
   return (
     <header className="page-heading admin-page-heading">
-      <div>
-        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-        <h1>{title}</h1>
-        {description && <p>{description}</p>}
-      </div>
+      <h1>{title}</h1>
       {action}
     </header>
   );
+}
+function usePageSize(reserved = 340, rowHeight = 76) {
+  const calculate = () =>
+    window.innerWidth >= 1100 && window.innerHeight >= 700
+      ? Math.max(
+          2,
+          Math.min(8, Math.floor((window.innerHeight - reserved) / rowHeight)),
+        )
+      : 6;
+  const [size, setSize] = useState(calculate);
+  useEffect(() => {
+    const resize = () => setSize(calculate());
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [reserved, rowHeight]);
+  return size;
+}
+function Pagination({
+  page,
+  pageSize,
+  total,
+  onPage,
+  busy = false,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPage: (page: number) => void;
+  busy?: boolean;
+}) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <footer className="admin-pagination">
+      <span>
+        {total
+          ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} de ${total}`
+          : "0 registros"}
+      </span>
+      <div>
+        <button
+          className="button ghost"
+          aria-label="Página anterior"
+          disabled={page <= 1 || busy}
+          onClick={() => onPage(page - 1)}
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <span>
+          {page} / {pages}
+        </span>
+        <button
+          className="button ghost"
+          aria-label="Página siguiente"
+          disabled={page >= pages || busy}
+          onClick={() => onPage(page + 1)}
+        >
+          <ChevronRight size={18} />
+        </button>
+      </div>
+    </footer>
+  );
+}
+function usePagination<T>(items: T[], pageSize: number, resetKey = "") {
+  const [page, setPage] = useState(1);
+  const safePage = Math.min(
+    page,
+    Math.max(1, Math.ceil(items.length / pageSize)),
+  );
+  useEffect(() => setPage(1), [resetKey, pageSize]);
+  return {
+    page: safePage,
+    setPage,
+    items: items.slice((safePage - 1) * pageSize, safePage * pageSize),
+  };
 }
 
 function LoadState({
@@ -201,6 +262,11 @@ function useFormStatus() {
     setBusy,
     message,
     fields,
+    clear: () => {
+      setMessage("");
+      setFields({});
+      setBusy(false);
+    },
     begin: () => {
       setBusy(true);
       setMessage("");
@@ -270,25 +336,30 @@ function DueSummary({ obligation }: { obligation: Obligation }) {
   );
 }
 
-export function AdminDashboard({ user, onNavigate }: PageProps) {
+export function AdminDashboard({ onNavigate }: PageProps) {
   const state = useLoad<Dashboard>("/dashboard");
+  const [tab, setTab] = useState("attention");
+  const pageSize = usePageSize(440, 84);
   const pending =
     state.data?.obligations.filter(
       (item) => item.active && item.status !== "OK",
     ) || [];
-  const firstName = user.name.trim().split(" ")[0];
+  const alerts = usePagination(pending, pageSize);
+  const trucks = usePagination(
+    state.data?.trucks.filter((truck) => truck.active) || [],
+    pageSize,
+  );
+  const trips = usePagination(state.data?.recentTrips || [], pageSize);
   return (
-    <div className="admin-page">
+    <div className="admin-page admin-dashboard">
       <PageHeading
-        eyebrow="TRANSPORTE TOMASINI"
-        title={`Todo a la vista, ${firstName}.`}
-        description="Los viajes y el cuidado de tu flota, en un mismo lugar."
+        title="Resumen"
         action={
           <button
             className="button primary"
             onClick={() => onNavigate("new-trip")}
           >
-            <Plus size={20} />
+            <Plus size={19} />
             Cargar viaje
           </button>
         }
@@ -298,209 +369,141 @@ export function AdminDashboard({ user, onNavigate }: PageProps) {
         error={state.error}
         retry={state.reload}
       />
-      {state.data && (
+      {state.data && !state.error && (
         <>
-          <div className="admin-overview">
-            <section className="admin-month-card">
-              <div className="admin-month-top">
-                <span>Este mes, en movimiento</span>
-                <Route size={23} />
-              </div>
-              <div className="admin-month-number">
-                {formatKm(state.data.stats.kilometersThisMonth)}
-                <span>km recorridos</span>
-              </div>
-              <div className="admin-month-bottom">
-                <span>
-                  <strong>{state.data.stats.tripsThisMonth}</strong> viajes
-                  registrados
-                </span>
-                <button onClick={() => onNavigate("reports")}>
-                  Ver resumen
-                  <ArrowRight size={17} />
-                </button>
-              </div>
-            </section>
-            <button
-              className="panel admin-stat-card"
-              onClick={() => onNavigate("trips")}
-            >
-              <span className="admin-stat-icon">
-                <FileCheck2 size={22} />
-              </span>
-              <strong>{state.data.stats.pendingReviews}</strong>
+          <div className="admin-metrics">
+            <button onClick={() => onNavigate("reports")}>
+              <span>Kilómetros este mes</span>
+              <strong>
+                {formatKm(state.data.stats.kilometersThisMonth)}{" "}
+                <small>km</small>
+              </strong>
+              <span>{state.data.stats.tripsThisMonth} viajes</span>
+            </button>
+            <button onClick={() => onNavigate("trips")}>
               <span>Viajes por revisar</span>
-              <small>
-                Revisar registros <ArrowRight size={15} />
-              </small>
+              <strong>{state.data.stats.pendingReviews}</strong>
+              <span>
+                Ver viajes <ArrowRight size={15} />
+              </span>
             </button>
             <button
-              className={`panel admin-stat-card ${state.data.stats.overdue ? "attention" : ""}`}
+              className={state.data.stats.overdue ? "has-alerts" : ""}
               onClick={() => onNavigate("obligations")}
             >
-              <span className="admin-stat-icon">
-                <Bell size={22} />
-              </span>
-              <strong>{pending.length}</strong>
               <span>Vencimientos pendientes</span>
-              <small>
-                {state.data.stats.overdue
-                  ? `${state.data.stats.overdue} vencidos · ${state.data.stats.upcoming} próximos`
-                  : "Controlar próximos límites"}
-                <ArrowRight size={15} />
-              </small>
+              <strong>{pending.length}</strong>
+              <span>
+                {state.data.stats.overdue} vencidos ·{" "}
+                {state.data.stats.upcoming} próximos
+              </span>
             </button>
           </div>
-          <div className="admin-dashboard-columns">
-            <section className="panel admin-section">
-              <div className="admin-section-head">
-                <div>
-                  <p className="eyebrow">PREVENIR ES MÁS SIMPLE</p>
-                  <h2>Lo que necesita atención</h2>
-                </div>
-                <button
-                  className="button ghost"
-                  onClick={() => onNavigate("obligations")}
-                >
-                  Ver todo
-                  <ArrowRight size={16} />
-                </button>
-              </div>
-              {pending.length ? (
-                <div className="admin-attention-list">
-                  {pending.slice(0, 5).map((item) => (
-                    <button
-                      key={item.id}
-                      className="admin-attention-row"
-                      onClick={() => onNavigate("obligations")}
-                    >
-                      <span
-                        className={`admin-item-symbol ${item.status.toLowerCase()}`}
-                      >
-                        {item.kind === "SERVICE" ? (
-                          <Wrench size={21} />
-                        ) : (
-                          <FileCheck2 size={21} />
-                        )}
-                      </span>
-                      <span className="admin-item-content">
-                        <strong>{item.title}</strong>
-                        <OwnerLabel obligation={item} />
-                        <DueSummary obligation={item} />
-                      </span>
-                      <StatusBadge status={item.status} />
-                      <ChevronRight size={17} className="admin-row-arrow" />
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="admin-all-clear">
-                  <span>
-                    <ShieldCheck size={30} />
-                  </span>
-                  <h3>Todo bajo control</h3>
-                  <p>
-                    {state.data.obligations.length
-                      ? "No hay vencimientos pendientes en este momento."
-                      : "Agregá servicios y documentos para empezar a anticiparte."}
-                  </p>
-                  {!state.data.obligations.length && (
-                    <button
-                      className="button secondary"
-                      onClick={() => onNavigate("obligations")}
-                    >
-                      Agregar vencimiento
-                    </button>
-                  )}
-                </div>
-              )}
-            </section>
-            <section className="panel admin-section">
-              <div className="admin-section-head">
-                <div>
-                  <p className="eyebrow">CADA CAMIÓN, AL DÍA</p>
-                  <h2>Tu flota</h2>
-                </div>
-                <button
-                  className="button ghost"
-                  onClick={() => onNavigate("fleet")}
-                  aria-label="Ver la flota"
-                >
-                  <ArrowRight size={20} />
-                </button>
-              </div>
-              <div className="admin-fleet-mini">
-                {state.data.trucks
-                  .filter((truck) => truck.active)
-                  .map((truck) => (
-                    <button
-                      key={truck.id}
-                      onClick={() => onNavigate("fleet")}
-                      className="admin-fleet-mini-row"
-                    >
-                      <span className="admin-truck-symbol">
-                        <TruckIcon size={29} strokeWidth={1.5} />
-                      </span>
-                      <span>
-                        <strong>{truck.plate}</strong>
-                        <small>{truck.label}</small>
-                      </span>
-                      <span className="admin-fleet-km">
-                        <strong>{formatKm(truck.odometer)}</strong>
-                        <small>km registrados</small>
-                      </span>
-                    </button>
-                  ))}
-                {!state.data.trucks.some((truck) => truck.active) && (
-                  <EmptyState
-                    title="Todavía no hay camiones"
-                    description="Agregá la primera unidad para comenzar."
-                  />
-                )}
-              </div>
-            </section>
-          </div>
-          <section className="panel admin-section">
-            <div className="admin-section-head">
-              <div>
-                <p className="eyebrow">ACTIVIDAD RECIENTE</p>
-                <h2>Últimos viajes</h2>
+          <section className="admin-surface admin-dashboard-detail">
+            <div className="admin-section-toolbar">
+              <div className="admin-tabs" aria-label="Resumen de actividad">
+                {[
+                  ["attention", "Vencimientos"],
+                  ["trips", "Últimos viajes"],
+                  ["fleet", "Flota"],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    className={tab === key ? "active" : ""}
+                    aria-pressed={tab === key}
+                    onClick={() => setTab(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
               <button
                 className="button ghost"
-                onClick={() => onNavigate("trips")}
+                onClick={() =>
+                  onNavigate(
+                    tab === "attention"
+                      ? "obligations"
+                      : tab === "trips"
+                        ? "trips"
+                        : "fleet",
+                  )
+                }
               >
-                Ver viajes
-                <ArrowRight size={16} />
+                Ver todos <ArrowRight size={17} />
               </button>
             </div>
-            {state.data.recentTrips.length ? (
-              <div className="admin-recent-trips">
-                {state.data.recentTrips.slice(0, 5).map((trip) => (
+            {tab === "attention" && (
+              <>
+                {alerts.items.map((item) => (
                   <button
-                    className="admin-recent-trip"
-                    onClick={() => onNavigate("trips")}
-                    key={trip.id}
+                    className="admin-overview-row"
+                    key={item.id}
+                    onClick={() => onNavigate("obligations")}
                   >
-                    <span className="admin-route-icon">
+                    <span
+                      className={`admin-item-symbol ${item.status.toLowerCase()}`}
+                    >
+                      {item.kind === "SERVICE" ? (
+                        <Wrench size={20} />
+                      ) : (
+                        <FileCheck2 size={20} />
+                      )}
+                    </span>
+                    <span className="admin-row-name">
+                      <strong>{item.title}</strong>
+                      <OwnerLabel obligation={item} />
+                    </span>
+                    <DueSummary obligation={item} />
+                    <StatusBadge status={item.status} />
+                    <ChevronRight size={17} />
+                  </button>
+                ))}
+                {!pending.length && (
+                  <EmptyState
+                    title={
+                      state.data.obligations.length
+                        ? "Sin vencimientos pendientes"
+                        : "Todavía no hay vencimientos"
+                    }
+                    description={
+                      state.data.obligations.length
+                        ? undefined
+                        : "Agregá el primer servicio o documento."
+                    }
+                    icon={<ShieldCheck size={26} />}
+                  />
+                )}
+                <Pagination
+                  page={alerts.page}
+                  pageSize={pageSize}
+                  total={pending.length}
+                  onPage={alerts.setPage}
+                />
+              </>
+            )}
+            {tab === "trips" && (
+              <>
+                {trips.items.map((trip) => (
+                  <button
+                    className="admin-overview-row"
+                    key={trip.id}
+                    onClick={() => onNavigate("trips")}
+                  >
+                    <span className="admin-item-symbol">
                       <Route size={20} />
                     </span>
-                    <span className="admin-trip-route">
+                    <span className="admin-row-name">
                       <strong>
-                        {trip.origin}
-                        <ArrowRight size={14} />
-                        {trip.destination}
+                        {trip.origin} → {trip.destination}
                       </strong>
                       <small>
                         {trip.driver.name} · {trip.truck.plate}
                       </small>
                     </span>
-                    <span className="admin-trip-date">
+                    <span className="admin-row-date">
                       {dateLabel(trip.departureAt)}
                     </span>
-                    <strong className="admin-trip-km">
-                      {formatKm(trip.distanceKm)} <small>km</small>
-                    </strong>
+                    <strong>{formatKm(trip.distanceKm)} km</strong>
                     <span
                       className={`badge ${trip.reviewedAt ? "success" : "neutral"}`}
                     >
@@ -508,12 +511,57 @@ export function AdminDashboard({ user, onNavigate }: PageProps) {
                     </span>
                   </button>
                 ))}
-              </div>
-            ) : (
-              <EmptyState
-                title="El primer viaje empieza acá"
-                description="Cuando se carguen viajes, vas a encontrarlos en este resumen."
-              />
+                {!state.data.recentTrips.length && (
+                  <EmptyState
+                    title="Todavía no hay viajes"
+                    description="Cargá el primer viaje para verlo acá."
+                  />
+                )}
+                <Pagination
+                  page={trips.page}
+                  pageSize={pageSize}
+                  total={state.data.recentTrips.length}
+                  onPage={trips.setPage}
+                />
+              </>
+            )}
+            {tab === "fleet" && (
+              <>
+                {trucks.items.map((truck) => (
+                  <button
+                    className="admin-overview-row"
+                    key={truck.id}
+                    onClick={() => onNavigate("fleet")}
+                  >
+                    <span className="admin-item-symbol">
+                      <TruckIcon size={23} />
+                    </span>
+                    <span className="admin-row-name">
+                      <strong>{truck.plate}</strong>
+                      <small>{truck.label}</small>
+                    </span>
+                    <span className="admin-row-date">
+                      {dateLabel(truck.odometerAt)}
+                    </span>
+                    <strong>{formatKm(truck.odometer)} km</strong>
+                    <ChevronRight size={17} />
+                  </button>
+                ))}
+                {!trucks.items.length && (
+                  <EmptyState
+                    title="Todavía no hay camiones"
+                    description="Agregá una unidad desde Flota."
+                  />
+                )}
+                <Pagination
+                  page={trucks.page}
+                  pageSize={pageSize}
+                  total={
+                    state.data.trucks.filter((truck) => truck.active).length
+                  }
+                  onPage={trucks.setPage}
+                />
+              </>
             )}
           </section>
         </>
@@ -567,11 +615,6 @@ function TruckForm({
       }}
     >
       <form className="admin-form" onSubmit={submit}>
-        <p className="admin-form-intro">
-          {truck
-            ? "Los viajes y servicios anteriores se conservan."
-            : "Identificá la unidad y registrá una lectura real de su odómetro."}
-        </p>
         <FormError message={form.message} />
         <div className="grid2">
           <Field label="Patente" error={form.fields.plate}>
@@ -663,12 +706,12 @@ export function FleetPage({ onNotify }: PageProps) {
   const [showInactive, setShowInactive] = useState(false);
   const items =
     trucks.data?.items.filter((truck) => showInactive || truck.active) || [];
+  const pageSize = usePageSize(430, 86);
+  const paged = usePagination(items, pageSize, String(showInactive));
   return (
     <div className="admin-page">
       <PageHeading
-        eyebrow="LAS UNIDADES"
-        title="Tu flota"
-        description="El kilometraje y la información de cada camión."
+        title="Flota"
         action={
           <button className="button primary" onClick={() => setEditing("new")}>
             <Plus size={19} />
@@ -676,6 +719,19 @@ export function FleetPage({ onNotify }: PageProps) {
           </button>
         }
       />
+      <div className="admin-toolbar">
+        <span className="admin-result-count">
+          {items.length} {items.length === 1 ? "camión" : "camiones"}
+        </span>
+        <label className="admin-check">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(event) => setShowInactive(event.target.checked)}
+          />
+          <span>Incluir inactivos</span>
+        </label>
+      </div>
       <LoadState
         loading={trucks.loading && !trucks.data}
         error={trucks.error || drivers.error}
@@ -684,76 +740,77 @@ export function FleetPage({ onNotify }: PageProps) {
           drivers.reload();
         }}
       />
-      <label className="admin-check admin-filter-check">
-        <input
-          type="checkbox"
-          checked={showInactive}
-          onChange={(event) => setShowInactive(event.target.checked)}
-        />
-        <span>Mostrar también camiones inactivos</span>
-      </label>
-      <div className="admin-fleet-grid">
-        {items.map((truck) => {
-          const assigned =
-            drivers.data?.items.filter(
-              (driver) => driver.active && driver.assignedTruckId === truck.id,
-            ) || [];
-          return (
-            <article
-              className={`panel admin-truck-card ${!truck.active ? "is-inactive" : ""}`}
-              key={truck.id}
-            >
-              <div className="admin-truck-card-head">
-                <span className="admin-truck-symbol">
-                  <TruckIcon size={34} strokeWidth={1.5} />
-                </span>
+      {trucks.data && !trucks.error && (
+        <section className="admin-surface admin-records">
+          <div className="admin-list-header admin-fleet-row">
+            <span>Camión</span>
+            <span>Chofer habitual</span>
+            <span>Odómetro</span>
+            <span>Estado</span>
+            <span />
+          </div>
+          {paged.items.map((truck) => {
+            const assigned =
+              drivers.data?.items.filter(
+                (driver) =>
+                  driver.active && driver.assignedTruckId === truck.id,
+              ) || [];
+            return (
+              <article
+                className="admin-record-row admin-fleet-row"
+                key={truck.id}
+              >
+                <div className="admin-row-identity">
+                  <span className="admin-item-symbol">
+                    <TruckIcon size={24} />
+                  </span>
+                  <div>
+                    <h2>{truck.plate}</h2>
+                    <p>{truck.label}</p>
+                  </div>
+                </div>
+                <div className="admin-row-secondary">
+                  <small className="admin-mobile-label">Chofer habitual</small>
+                  {assigned.map((driver) => driver.name).join(", ") ||
+                    "Sin asignar"}
+                </div>
+                <div className="admin-row-value">
+                  <strong>{formatKm(truck.odometer)} km</strong>
+                  <small>{dateLabel(truck.odometerAt)}</small>
+                </div>
                 <span
                   className={`badge ${truck.active ? "success" : "neutral"}`}
                 >
                   {truck.active ? "Activo" : "Inactivo"}
                 </span>
-              </div>
-              <h2>{truck.plate}</h2>
-              <p className="admin-truck-model">{truck.label}</p>
-              <div className="admin-truck-meter">
-                <span>Odómetro registrado</span>
-                <strong>
-                  {formatKm(truck.odometer)} <small>km</small>
-                </strong>
-                <small>
-                  <Clock3 size={14} />
-                  Lectura del {dateLabel(truck.odometerAt)}
-                </small>
-              </div>
-              <div className="admin-truck-driver">
-                <UserRound size={18} />
-                <span>
-                  {assigned.length
-                    ? assigned.map((driver) => driver.name).join(", ")
-                    : "Sin chofer asignado"}
-                </span>
-              </div>
-              <button
-                className="button secondary"
-                onClick={() => setEditing(truck)}
-              >
-                <Pencil size={16} />
-                Editar camión
-              </button>
-            </article>
-          );
-        })}
-      </div>
-      {!trucks.loading && !trucks.error && !items.length && (
-        <EmptyState
-          title="Sumemos el primer camión"
-          description="Necesitás la patente, el modelo y una lectura del odómetro."
-        >
-          <button className="button primary" onClick={() => setEditing("new")}>
-            <Plus size={18} />
-            Agregar camión
-          </button>
-        </EmptyState>
+                <button
+                  className="button ghost"
+                  aria-label={`Editar camión ${truck.plate}`}
+                  onClick={() => setEditing(truck)}
+                >
+                  <Pencil size={17} />
+                  <span>Editar</span>
+                </button>
+              </article>
+            );
+          })}
+          {!items.length && (
+            <EmptyState
+              title={
+                showInactive
+                  ? "Todavía no hay camiones"
+                  : "No hay camiones activos"
+              }
+              description="Agregá una unidad con su patente y odómetro."
+            />
+          )}
+          <Pagination
+            page={paged.page}
+            pageSize={pageSize}
+            total={items.length}
+            onPage={paged.setPage}
+          />
+        </section>
       )}
       {editing && (
         <TruckForm
@@ -821,11 +878,6 @@ function DriverForm({
       }}
     >
       <form className="admin-form" onSubmit={submit}>
-        <p className="admin-form-intro">
-          {driver
-            ? "La asignación nueva se usará en los próximos viajes."
-            : "Creá su acceso y elegí el camión que usa habitualmente."}
-        </p>
         <FormError message={form.message} />
         <Field label="Nombre y apellido" error={form.fields.name}>
           <input
@@ -995,24 +1047,397 @@ function PasswordForm({
   );
 }
 
+function InvitationForm({
+  drivers,
+  onClose,
+  onSaved,
+}: {
+  drivers: Driver[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [role, setRole] = useState<"DRIVER" | "ADMIN">("DRIVER");
+  const [driverId, setDriverId] = useState("");
+  const [name, setName] = useState("");
+  const [expiresInDays, setExpiresInDays] = useState("7");
+  const [created, setCreated] = useState<{
+    invitation: Invitation;
+    joinUrl: string;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const form = useFormStatus();
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy) return;
+    form.begin();
+    try {
+      const result = await send<{ invitation: Invitation; joinUrl: string }>(
+        "/invitations",
+        "POST",
+        {
+          role,
+          name: name.trim() || null,
+          driverId: role === "DRIVER" ? driverId || null : null,
+          expiresInDays: Number(expiresInDays),
+        },
+      );
+      setCreated(result);
+      form.setBusy(false);
+      onSaved();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  async function copy() {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.joinUrl);
+      setCopied(true);
+      setCopyError("");
+    } catch {
+      setCopyError("Seleccioná el enlace y copialo manualmente.");
+    }
+  }
+  return (
+    <Modal
+      title={created ? "Invitación creada" : "Invitar al equipo"}
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      {created ? (
+        <div className="admin-form">
+          <div className="admin-invite-success">
+            <CheckCircle2 size={28} />
+            <div>
+              <strong>
+                {created.invitation.name ||
+                  created.invitation.driverName ||
+                  (created.invitation.role === "ADMIN"
+                    ? "Administrador"
+                    : "Chofer")}
+              </strong>
+              <p>Vence el {formatDate(created.invitation.expiresAt, true)}.</p>
+            </div>
+          </div>
+          <Field
+            label="Enlace de invitación"
+            hint="Copialo ahora. Por seguridad, no se podrá volver a consultar."
+          >
+            <input
+              className="admin-invite-link"
+              readOnly
+              value={created.joinUrl}
+              onFocus={(event) => event.target.select()}
+            />
+          </Field>
+          <FormError message={copyError} />
+          <p className="admin-field-note">
+            Compartilo en privado con la persona invitada. Podrá elegir su
+            usuario y contraseña.
+          </p>
+          <div className="admin-form-footer">
+            <button className="button secondary" onClick={onClose}>
+              Cerrar
+            </button>
+            <button className="button primary" onClick={copy}>
+              {copied ? <Check size={18} /> : <Copy size={18} />}{" "}
+              {copied ? "Enlace copiado" : "Copiar enlace"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form className="admin-form" onSubmit={submit}>
+          <FormError message={form.message} />
+          <div className="grid2">
+            <Field label="Tipo de acceso" error={form.fields.role}>
+              <select
+                value={role}
+                onChange={(event) => {
+                  setRole(event.target.value as "DRIVER" | "ADMIN");
+                  setDriverId("");
+                }}
+              >
+                <option value="DRIVER">Chofer</option>
+                <option value="ADMIN">Administrador</option>
+              </select>
+            </Field>
+            <Field label="El enlace vence en" error={form.fields.expiresInDays}>
+              <select
+                value={expiresInDays}
+                onChange={(event) => setExpiresInDays(event.target.value)}
+              >
+                <option value="1">1 día</option>
+                <option value="7">7 días</option>
+                <option value="15">15 días</option>
+                <option value="30">30 días</option>
+              </select>
+            </Field>
+          </div>
+          {role === "DRIVER" && (
+            <Field label="Persona" error={form.fields.driverId}>
+              <select
+                value={driverId}
+                onChange={(event) => setDriverId(event.target.value)}
+              >
+                <option value="">Nuevo chofer</option>
+                {drivers
+                  .filter((driver) => driver.active)
+                  .map((driver) => (
+                    <option key={driver.id} value={driver.id}>
+                      {driver.name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+          )}
+          {!driverId && (
+            <Field
+              label="Nombre y apellido (opcional)"
+              error={form.fields.name}
+            >
+              <input
+                value={name}
+                maxLength={100}
+                autoComplete="off"
+                onChange={(event) => setName(event.target.value)}
+              />
+            </Field>
+          )}
+          {driverId && (
+            <div className="admin-callout" role="note">
+              <CircleAlert size={19} />
+              <p>
+                Este enlace reemplaza los anteriores para este chofer. Al
+                aceptarlo, se cambiarán su usuario y contraseña y se cerrarán
+                sus sesiones, sin perder sus viajes.
+              </p>
+            </div>
+          )}
+          {role === "ADMIN" && (
+            <p className="admin-field-note">
+              Tendrá acceso a viajes, flota, equipo, vencimientos y
+              preferencias.
+            </p>
+          )}
+          <FormFooter
+            busy={form.busy}
+            onClose={onClose}
+            label="Crear invitación"
+          />
+        </form>
+      )}
+    </Modal>
+  );
+}
+function InvitationsPanel({
+  revision,
+  onNotify,
+}: {
+  revision: number;
+  onNotify: PageProps["onNotify"];
+}) {
+  const pageSize = usePageSize(430, 88);
+  const [page, setPage] = useState(1);
+  const state = useLoad<InvitationList>(
+    `/invitations?page=${page}&pageSize=${pageSize}`,
+  );
+  const [revoking, setRevoking] = useState<Invitation | null>(null);
+  const form = useFormStatus();
+  useEffect(() => {
+    setPage(1);
+    state.reload();
+  }, [revision]);
+  useEffect(() => setPage(1), [pageSize]);
+  useEffect(() => {
+    if (state.data && page > 1 && !state.data.items.length)
+      setPage(Math.max(1, Math.ceil(state.data.total / pageSize)));
+  }, [state.data, page, pageSize]);
+  async function revoke() {
+    if (!revoking || form.busy) return;
+    form.begin();
+    try {
+      await send(`/invitations/${revoking.id}/revoke`, "POST", {});
+      setRevoking(null);
+      form.setBusy(false);
+      state.reload();
+      onNotify("Invitación revocada");
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  const labels = {
+    PENDING: "Pendiente",
+    ACCEPTED: "Aceptada",
+    REVOKED: "Revocada",
+    EXPIRED: "Vencida",
+  };
+  return (
+    <>
+      <LoadState
+        loading={state.loading && !state.data}
+        error={state.error}
+        retry={state.reload}
+      />
+      {state.data && !state.error && (
+        <section className="admin-surface admin-records">
+          <div className="admin-list-header admin-invitation-row">
+            <span>Invitación</span>
+            <span>Acceso</span>
+            <span>Vencimiento</span>
+            <span>Estado</span>
+            <span />
+          </div>
+          {state.data.items.map((item) => (
+            <article
+              key={item.id}
+              className="admin-record-row admin-invitation-row"
+            >
+              <div className="admin-row-identity">
+                <span className="admin-item-symbol">
+                  <Link2 size={21} />
+                </span>
+                <div>
+                  <h2>
+                    {item.name ||
+                      item.driverName ||
+                      (item.role === "ADMIN"
+                        ? "Nuevo administrador"
+                        : "Nuevo chofer")}
+                  </h2>
+                  <p>Creada {dateLabel(item.createdAt)}</p>
+                </div>
+              </div>
+              <span>{item.role === "ADMIN" ? "Administrador" : "Chofer"}</span>
+              <div className="admin-row-value">
+                <small className="admin-mobile-label">Vence</small>
+                {dateLabel(item.expiresAt)}
+              </div>
+              <span
+                className={`badge ${item.status === "ACCEPTED" ? "success" : item.status === "PENDING" ? "warning" : "neutral"}`}
+              >
+                {labels[item.status]}
+              </span>
+              {item.status === "PENDING" ? (
+                <button
+                  className="button ghost"
+                  onClick={() => {
+                    form.clear();
+                    setRevoking(item);
+                  }}
+                >
+                  <X size={17} />
+                  Revocar
+                </button>
+              ) : (
+                <span />
+              )}
+            </article>
+          ))}
+          {!state.data.items.length && (
+            <EmptyState
+              title="Todavía no hay invitaciones"
+              description="Creá un enlace para sumar un chofer o administrador."
+              icon={<Link2 size={26} />}
+            />
+          )}
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={state.data.total}
+            onPage={setPage}
+            busy={state.loading}
+          />
+        </section>
+      )}
+      {revoking && (
+        <Modal
+          title="Revocar invitación"
+          onClose={() => {
+            if (!form.busy) setRevoking(null);
+          }}
+        >
+          <div className="admin-form">
+            <p>
+              El enlace de{" "}
+              {revoking.name || revoking.driverName || "esta invitación"} dejará
+              de funcionar. Podés crear una nueva invitación después.
+            </p>
+            <FormError message={form.message} />
+            <div className="admin-form-footer">
+              <button
+                className="button secondary"
+                disabled={form.busy}
+                onClick={() => setRevoking(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="button danger"
+                disabled={form.busy}
+                onClick={revoke}
+              >
+                {form.busy ? "Revocando…" : "Revocar enlace"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 export function DriversPage({ onNotify }: PageProps) {
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
   const trucks = useLoad<{ items: Truck[] }>("/trucks");
+  const [tab, setTab] = useState("drivers");
   const [editing, setEditing] = useState<Driver | "new" | null>(null);
   const [passwordDriver, setPasswordDriver] = useState<Driver | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const pageSize = usePageSize(430, 86);
+  const paged = usePagination(drivers.data?.items || [], pageSize);
   return (
     <div className="admin-page">
       <PageHeading
-        eyebrow="LAS PERSONAS"
-        title="Choferes"
-        description="Sus accesos y el camión que usan cada día."
+        title="Equipo"
         action={
-          <button className="button primary" onClick={() => setEditing("new")}>
-            <Plus size={19} />
-            Agregar chofer
-          </button>
+          <div className="admin-heading-actions">
+            {tab === "drivers" && (
+              <button
+                className="button secondary"
+                onClick={() => setEditing("new")}
+              >
+                <Plus size={18} />
+                Agregar chofer
+              </button>
+            )}
+            <button
+              className="button primary"
+              onClick={() => setInviting(true)}
+            >
+              <Link2 size={18} />
+              Invitar
+            </button>
+          </div>
         }
       />
+      <div className="admin-tabs" aria-label="Equipo y accesos">
+        <button
+          className={tab === "drivers" ? "active" : ""}
+          aria-pressed={tab === "drivers"}
+          onClick={() => setTab("drivers")}
+        >
+          Choferes <span>{drivers.data?.items.length ?? "—"}</span>
+        </button>
+        <button
+          className={tab === "invitations" ? "active" : ""}
+          aria-pressed={tab === "invitations"}
+          onClick={() => setTab("invitations")}
+        >
+          Invitaciones
+        </button>
+      </div>
       <LoadState
         loading={drivers.loading && !drivers.data}
         error={drivers.error || trucks.error}
@@ -1021,68 +1446,83 @@ export function DriversPage({ onNotify }: PageProps) {
           trucks.reload();
         }}
       />
-      <div className="admin-drivers-list">
-        {drivers.data?.items.map((driver) => (
-          <article className="panel admin-driver-card" key={driver.id}>
-            <div className="admin-driver-identity">
-              <span className="admin-avatar">
-                {driver.name
-                  .split(" ")
-                  .slice(0, 2)
-                  .map((name) => name[0])
-                  .join("")}
-              </span>
-              <div>
-                <h2>{driver.name}</h2>
-                <p>Usuario: {driver.username}</p>
+      {tab === "drivers" && drivers.data && !drivers.error && (
+        <section className="admin-surface admin-records">
+          <div className="admin-list-header admin-driver-row">
+            <span>Chofer</span>
+            <span>Camión habitual</span>
+            <span>Estado</span>
+            <span>Acciones</span>
+          </div>
+          {paged.items.map((driver) => (
+            <article
+              className="admin-record-row admin-driver-row"
+              key={driver.id}
+            >
+              <div className="admin-row-identity">
+                <span className="admin-avatar">
+                  {driver.name
+                    .split(" ")
+                    .slice(0, 2)
+                    .map((name) => name[0])
+                    .join("")}
+                </span>
+                <div>
+                  <h2>{driver.name}</h2>
+                  <p>
+                    {driver.username}
+                    {driver.phone && (
+                      <>
+                        {" "}
+                        · <a href={`tel:${driver.phone}`}>{driver.phone}</a>
+                      </>
+                    )}
+                  </p>
+                </div>
               </div>
+              <span className="admin-row-secondary">
+                {trucks.data?.items.find(
+                  (truck) => truck.id === driver.assignedTruckId,
+                )?.plate || "Sin asignar"}
+              </span>
               <span
                 className={`badge ${driver.active ? "success" : "neutral"}`}
               >
                 {driver.active ? "Activo" : "Inactivo"}
               </span>
-            </div>
-            <div className="admin-driver-details">
-              <span>
-                <TruckIcon size={18} />
-                {trucks.data?.items.find(
-                  (truck) => truck.id === driver.assignedTruckId,
-                )?.plate || "Sin camión asignado"}
-              </span>
-              {driver.phone && (
-                <a href={`tel:${driver.phone}`} className="admin-phone">
-                  {driver.phone}
-                </a>
-              )}
-            </div>
-            <div className="admin-driver-actions">
-              <button
-                className="button secondary"
-                onClick={() => setEditing(driver)}
-              >
-                <Pencil size={16} />
-                Editar
-              </button>
-              <button
-                className="button ghost"
-                onClick={() => setPasswordDriver(driver)}
-              >
-                Restablecer acceso
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
-      {drivers.data && !drivers.data.items.length && (
-        <EmptyState
-          title="Agregá a tu equipo"
-          description="Cada chofer tendrá su propio usuario y verá sus viajes."
-        >
-          <button className="button primary" onClick={() => setEditing("new")}>
-            <UsersRound size={18} />
-            Agregar chofer
-          </button>
-        </EmptyState>
+              <div className="admin-row-actions">
+                <button
+                  className="button ghost"
+                  onClick={() => setEditing(driver)}
+                >
+                  <Pencil size={17} />
+                  Editar
+                </button>
+                <button
+                  className="button ghost"
+                  onClick={() => setPasswordDriver(driver)}
+                >
+                  Restablecer acceso
+                </button>
+              </div>
+            </article>
+          ))}
+          {!drivers.data.items.length && (
+            <EmptyState
+              title="Todavía no hay choferes"
+              description="Agregá un chofer o enviale una invitación."
+            />
+          )}
+          <Pagination
+            page={paged.page}
+            pageSize={pageSize}
+            total={drivers.data.items.length}
+            onPage={paged.setPage}
+          />
+        </section>
+      )}
+      {tab === "invitations" && (
+        <InvitationsPanel revision={revision} onNotify={onNotify} />
       )}
       {editing && (
         <DriverForm
@@ -1112,6 +1552,16 @@ export function DriversPage({ onNotify }: PageProps) {
           }}
         />
       )}
+      {inviting && (
+        <InvitationForm
+          drivers={drivers.data?.items || []}
+          onClose={() => setInviting(false)}
+          onSaved={() => {
+            setRevision((value) => value + 1);
+            setTab("invitations");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1134,6 +1584,58 @@ function addMonths(date: string, months: number): string {
   return result.toISOString().slice(0, 10);
 }
 
+function FormSteps({ labels, step }: { labels: string[]; step: number }) {
+  return (
+    <ol className="admin-form-steps" aria-label="Pasos del formulario">
+      {labels.map((label, index) => (
+        <li
+          key={label}
+          className={
+            index === step ? "current" : index < step ? "complete" : ""
+          }
+          aria-current={index === step ? "step" : undefined}
+        >
+          <span>{index < step ? <Check size={14} /> : index + 1}</span>
+          {label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+function StepFooter({
+  step,
+  finalStep,
+  busy,
+  onBack,
+  onClose,
+  label,
+}: {
+  step: number;
+  finalStep: number;
+  busy: boolean;
+  onBack: () => void;
+  onClose: () => void;
+  label: string;
+}) {
+  return (
+    <div className="admin-form-footer">
+      <button
+        type="button"
+        className="button secondary"
+        disabled={busy}
+        onClick={step ? onBack : onClose}
+      >
+        {step ? <ChevronLeft size={18} /> : null}
+        {step ? "Volver" : "Cancelar"}
+      </button>
+      <button className="button primary" disabled={busy}>
+        {busy ? "Guardando…" : step === finalStep ? label : "Continuar"}
+        {!busy &&
+          (step === finalStep ? <Check size={18} /> : <ArrowRight size={18} />)}
+      </button>
+    </div>
+  );
+}
 function ObligationForm({
   obligation,
   trucks,
@@ -1149,6 +1651,7 @@ function ObligationForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [step, setStep] = useState(0);
   const [kind, setKind] = useState<"SERVICE" | "DOCUMENT">(
     obligation?.kind || "SERVICE",
   );
@@ -1184,362 +1687,399 @@ function ObligationForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (form.busy) return;
+    if (step < 2) {
+      setStep(step + 1);
+      return;
+    }
     form.begin();
     try {
-      const body = {
-        title: title.trim(),
-        kind,
-        truckId: ownerType === "truck" ? ownerId : null,
-        driverId: ownerType === "driver" ? ownerId : null,
-        dueDate: dueDate || null,
-        dueKm: ownerType === "truck" ? optionalNumber(dueKm) : null,
-        intervalMonths: optionalNumber(intervalMonths),
-        intervalKm: ownerType === "truck" ? optionalNumber(intervalKm) : null,
-        warningDays: Number(warningDays),
-        warningKm: Number(warningKm),
-        notes: notes.trim() || null,
-        ...(obligation ? { active, version: obligation.version } : {}),
-        ...(!obligation && initialRecord
-          ? {
-              initialRecord: {
-                performedAt: businessInstant(performedAt),
-                odometer: optionalNumber(odometer),
-              },
-            }
-          : {}),
-      };
       await send(
         obligation ? `/obligations/${obligation.id}` : "/obligations",
         obligation ? "PATCH" : "POST",
-        body,
+        {
+          title: title.trim(),
+          kind,
+          truckId: ownerType === "truck" ? ownerId : null,
+          driverId: ownerType === "driver" ? ownerId : null,
+          dueDate: dueDate || null,
+          dueKm: ownerType === "truck" ? optionalNumber(dueKm) : null,
+          intervalMonths: optionalNumber(intervalMonths),
+          intervalKm: ownerType === "truck" ? optionalNumber(intervalKm) : null,
+          warningDays: Number(warningDays),
+          warningKm: Number(warningKm),
+          notes: notes.trim() || null,
+          ...(obligation ? { active, version: obligation.version } : {}),
+          ...(!obligation && kind === "SERVICE" && initialRecord
+            ? {
+                initialRecord: {
+                  performedAt: businessInstant(performedAt),
+                  odometer: optionalNumber(odometer),
+                },
+              }
+            : {}),
+        },
       );
       onSaved();
     } catch (error) {
       form.fail(error);
+      if (error instanceof ApiError) {
+        const fields = Object.keys(error.fields);
+        if (
+          fields.some((key) =>
+            ["title", "kind", "truckId", "driverId", "notes"].includes(key),
+          )
+        )
+          setStep(0);
+        else if (
+          fields.some((key) =>
+            [
+              "dueDate",
+              "dueKm",
+              "intervalMonths",
+              "intervalKm",
+              "warningDays",
+              "warningKm",
+            ].includes(key),
+          )
+        )
+          setStep(1);
+      }
     }
   }
+  const ownerName =
+    ownerType === "truck"
+      ? trucks.find((item) => item.id === ownerId)?.plate
+      : drivers.find((item) => item.id === ownerId)?.name;
   return (
     <Modal
-      title={obligation ? "Editar vencimiento" : "Agregar un vencimiento"}
+      title={obligation ? "Editar vencimiento" : "Agregar vencimiento"}
       wide
       onClose={() => {
         if (!form.busy) onClose();
       }}
     >
-      <form className="admin-form" onSubmit={submit}>
-        <p className="admin-form-intro">
-          Programá un límite por fecha, por kilómetros o por ambos.
-        </p>
+      <form className="admin-form admin-step-form" onSubmit={submit}>
+        <FormSteps
+          labels={["Datos", "Programación", "Confirmación"]}
+          step={step}
+        />
         <FormError message={form.message} />
-        {!obligation && (
-          <div
-            className="admin-type-picker"
-            role="group"
-            aria-label="Tipo de vencimiento"
-          >
-            <button
-              type="button"
-              className={kind === "SERVICE" ? "selected" : ""}
-              aria-pressed={kind === "SERVICE"}
-              onClick={() => {
-                setKind("SERVICE");
-                if (ownerType !== "truck") {
-                  setOwnerType("truck");
-                  setOwnerId("");
-                }
-              }}
-            >
-              <Wrench size={20} />
-              <span>
-                <strong>Servicio</strong>
-                <small>Mantenimiento del camión</small>
-              </span>
-              {kind === "SERVICE" && <Check size={18} />}
-            </button>
-            <button
-              type="button"
-              className={kind === "DOCUMENT" ? "selected" : ""}
-              aria-pressed={kind === "DOCUMENT"}
-              onClick={() => setKind("DOCUMENT")}
-            >
-              <FileCheck2 size={20} />
-              <span>
-                <strong>Documento</strong>
-                <small>Seguro, patente y más</small>
-              </span>
-              {kind === "DOCUMENT" && <Check size={18} />}
-            </button>
-          </div>
-        )}
-        <Field
-          label="Nombre del servicio o documento"
-          error={form.fields.title}
-        >
-          <input
-            required
-            maxLength={120}
-            placeholder={
-              kind === "SERVICE"
-                ? "Ej. Cambio de aceite y filtros"
-                : "Ej. Seguro del camión"
-            }
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </Field>
-        <div className="grid2">
-          <Field label="Corresponde a">
-            <select
-              value={ownerType}
-              disabled={!!obligation || kind === "SERVICE"}
-              onChange={(event) => {
-                setOwnerType(event.target.value as "truck" | "driver");
-                setOwnerId("");
-              }}
-            >
-              <option value="truck">Un camión</option>
-              <option value="driver">Un chofer</option>
-            </select>
-          </Field>
-          <Field
-            label={ownerType === "truck" ? "Camión" : "Chofer"}
-            error={form.fields.truckId || form.fields.driverId}
-          >
-            <select
-              required
-              disabled={!!obligation}
-              value={ownerId}
-              onChange={(event) => setOwnerId(event.target.value)}
-            >
-              <option value="">Seleccionar…</option>
-              {ownerType === "truck"
-                ? trucks
-                    .filter((truck) => truck.active || truck.id === ownerId)
-                    .map((truck) => (
-                      <option key={truck.id} value={truck.id}>
-                        {truck.plate} · {truck.label}
-                      </option>
-                    ))
-                : drivers
-                    .filter((driver) => driver.active || driver.id === ownerId)
-                    .map((driver) => (
-                      <option key={driver.id} value={driver.id}>
-                        {driver.name}
-                      </option>
-                    ))}
-            </select>
-          </Field>
-        </div>
-        <div className="admin-form-block">
-          <h3>
-            <CalendarDays size={18} />
-            Próximo vencimiento
-          </h3>
-          <p>
-            Si indicás fecha y kilómetros, se avisará cuando se alcance el
-            primero.
-          </p>
-          <div className="grid2">
-            <Field label="Fecha límite (opcional)" error={form.fields.dueDate}>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={(event) => setDueDate(event.target.value)}
-              />
-            </Field>
-            {ownerType === "truck" && (
-              <Field
-                label="Odómetro límite (opcional)"
-                error={form.fields.dueKm}
-                hint="Lectura total del odómetro, no kilómetros restantes."
-              >
+        <div className="admin-step-content" key={step}>
+          {step === 0 && (
+            <>
+              {!obligation && (
+                <div
+                  className="admin-type-picker"
+                  role="group"
+                  aria-label="Tipo de vencimiento"
+                >
+                  <button
+                    type="button"
+                    className={kind === "SERVICE" ? "selected" : ""}
+                    aria-pressed={kind === "SERVICE"}
+                    onClick={() => {
+                      setKind("SERVICE");
+                      if (ownerType !== "truck") {
+                        setOwnerType("truck");
+                        setOwnerId("");
+                      }
+                    }}
+                  >
+                    <Wrench size={19} />
+                    Servicio{kind === "SERVICE" && <Check size={16} />}
+                  </button>
+                  <button
+                    type="button"
+                    className={kind === "DOCUMENT" ? "selected" : ""}
+                    aria-pressed={kind === "DOCUMENT"}
+                    onClick={() => setKind("DOCUMENT")}
+                  >
+                    <FileCheck2 size={19} />
+                    Documento{kind === "DOCUMENT" && <Check size={16} />}
+                  </button>
+                </div>
+              )}
+              <Field label="Nombre" error={form.fields.title}>
                 <input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  step="1"
-                  value={dueKm}
-                  onChange={(event) => setDueKm(event.target.value)}
-                  placeholder="Ej. 450000"
+                  required
+                  maxLength={120}
+                  placeholder={
+                    kind === "SERVICE"
+                      ? "Ej. Cambio de aceite y filtros"
+                      : "Ej. Seguro del camión"
+                  }
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
                 />
               </Field>
-            )}
-          </div>
-          {!dueDate && (ownerType === "driver" || !dueKm) && (
-            <p className="admin-inline-note">
-              <Clock3 size={16} />
-              Quedará pendiente de programar hasta que definas un límite.
-            </p>
-          )}
-        </div>
-        <details
-          className="admin-details"
-          open={!!obligation?.intervalMonths || !!obligation?.intervalKm}
-        >
-          <summary>
-            Frecuencia y anticipación de avisos
-            <ChevronDown size={18} />
-          </summary>
-          <div className="admin-details-content">
-            <div className="grid2">
-              <Field
-                label="Repetir cada… meses (opcional)"
-                error={form.fields.intervalMonths}
-              >
-                <input
-                  type="number"
-                  min="1"
-                  max="120"
-                  step="1"
-                  inputMode="numeric"
-                  value={intervalMonths}
-                  onChange={(event) => setIntervalMonths(event.target.value)}
-                />
-              </Field>
-              {ownerType === "truck" && (
+              <div className="grid2">
+                <Field label="Corresponde a">
+                  <select
+                    value={ownerType}
+                    disabled={!!obligation || kind === "SERVICE"}
+                    onChange={(event) => {
+                      setOwnerType(event.target.value as "truck" | "driver");
+                      setOwnerId("");
+                    }}
+                  >
+                    <option value="truck">Un camión</option>
+                    <option value="driver">Un chofer</option>
+                  </select>
+                </Field>
                 <Field
-                  label="Repetir cada… km (opcional)"
-                  error={form.fields.intervalKm}
+                  label={ownerType === "truck" ? "Camión" : "Chofer"}
+                  error={form.fields.truckId || form.fields.driverId}
+                >
+                  <select
+                    required
+                    disabled={!!obligation}
+                    value={ownerId}
+                    onChange={(event) => setOwnerId(event.target.value)}
+                  >
+                    <option value="">Seleccionar…</option>
+                    {ownerType === "truck"
+                      ? trucks
+                          .filter((item) => item.active || item.id === ownerId)
+                          .map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.plate} · {item.label}
+                            </option>
+                          ))
+                      : drivers
+                          .filter((item) => item.active || item.id === ownerId)
+                          .map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Observaciones (opcional)" error={form.fields.notes}>
+                <textarea
+                  rows={2}
+                  maxLength={2000}
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                />
+              </Field>
+            </>
+          )}
+          {step === 1 && (
+            <>
+              <div className="grid2">
+                <Field
+                  label="Fecha límite (opcional)"
+                  error={form.fields.dueDate}
+                >
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={(event) => setDueDate(event.target.value)}
+                  />
+                </Field>
+                {ownerType === "truck" && (
+                  <Field
+                    label="Odómetro límite (opcional)"
+                    error={form.fields.dueKm}
+                  >
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputMode="numeric"
+                      placeholder="Ej. 450000"
+                      value={dueKm}
+                      onChange={(event) => setDueKm(event.target.value)}
+                    />
+                  </Field>
+                )}
+              </div>
+              <p className="admin-field-note">
+                {dueDate || (ownerType === "truck" && dueKm)
+                  ? "Se avisa al alcanzar cualquiera de los límites. El odómetro es la lectura total, no los kilómetros restantes."
+                  : "Sin un límite, quedará pendiente de configurar."}
+              </p>
+              <div className="grid2">
+                <Field
+                  label="Repetir cada… meses (opcional)"
+                  error={form.fields.intervalMonths}
                 >
                   <input
                     type="number"
                     min="1"
+                    max="120"
                     step="1"
                     inputMode="numeric"
-                    value={intervalKm}
-                    onChange={(event) => setIntervalKm(event.target.value)}
+                    value={intervalMonths}
+                    onChange={(event) => setIntervalMonths(event.target.value)}
                   />
                 </Field>
-              )}
-            </div>
-            <div className="grid2">
-              <Field
-                label="Avisar con… días de anticipación"
-                error={form.fields.warningDays}
-              >
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  max="365"
-                  step="1"
-                  inputMode="numeric"
-                  value={warningDays}
-                  onChange={(event) => setWarningDays(event.target.value)}
-                />
-              </Field>
-              {ownerType === "truck" && (
+                {ownerType === "truck" && (
+                  <Field
+                    label="Repetir cada… km (opcional)"
+                    error={form.fields.intervalKm}
+                  >
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      value={intervalKm}
+                      onChange={(event) => setIntervalKm(event.target.value)}
+                    />
+                  </Field>
+                )}
+              </div>
+              <div className="grid2">
                 <Field
-                  label="Avisar con… km de anticipación"
-                  error={form.fields.warningKm}
+                  label="Avisar con… días de anticipación"
+                  error={form.fields.warningDays}
                 >
                   <input
                     required
                     type="number"
                     min="0"
+                    max="365"
                     step="1"
                     inputMode="numeric"
-                    value={warningKm}
-                    onChange={(event) => setWarningKm(event.target.value)}
+                    value={warningDays}
+                    onChange={(event) => setWarningDays(event.target.value)}
                   />
                 </Field>
-              )}
-            </div>
-            <p className="admin-field-note">
-              La frecuencia sirve para sugerir el próximo límite cuando
-              registres una renovación.
-            </p>
-          </div>
-        </details>
-        {!obligation && kind === "SERVICE" && (
-          <div className="admin-form-block">
-            <label className="admin-check">
-              <input
-                type="checkbox"
-                checked={initialRecord}
-                onChange={(event) => setInitialRecord(event.target.checked)}
-              />
-              <span>
-                <strong>Registrar también el último servicio</strong>
-                <small>Se guardará como parte del historial del camión.</small>
-              </span>
-            </label>
-            {initialRecord && (
-              <>
-                <div className="grid2">
+                {ownerType === "truck" && (
                   <Field
-                    label="Fecha y hora del servicio"
-                    error={form.fields["initialRecord.performedAt"]}
-                  >
-                    <input
-                      required
-                      type="datetime-local"
-                      value={performedAt}
-                      max={dateTimeInput()}
-                      onChange={(event) => setPerformedAt(event.target.value)}
-                    />
-                  </Field>
-                  <Field
-                    label="Odómetro en ese momento"
-                    error={form.fields["initialRecord.odometer"]}
+                    label="Avisar con… km de anticipación"
+                    error={form.fields.warningKm}
                   >
                     <input
                       required
                       type="number"
-                      inputMode="numeric"
                       min="0"
                       step="1"
-                      value={odometer}
-                      onChange={(event) => setOdometer(event.target.value)}
+                      inputMode="numeric"
+                      value={warningKm}
+                      onChange={(event) => setWarningKm(event.target.value)}
                     />
                   </Field>
-                </div>
-                {(intervalMonths || intervalKm) && (
-                  <button
-                    className="button secondary"
-                    type="button"
-                    onClick={() => {
-                      if (intervalMonths)
-                        setDueDate(
-                          addMonths(performedAt, Number(intervalMonths)),
-                        );
-                      if (intervalKm && odometer)
-                        setDueKm(String(Number(odometer) + Number(intervalKm)));
-                    }}
-                  >
-                    Calcular próximo límite
-                  </button>
                 )}
-              </>
-            )}
-          </div>
-        )}
-        <Field label="Observaciones (opcional)" error={form.fields.notes}>
-          <textarea
-            rows={3}
-            maxLength={2000}
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            placeholder="Algún detalle que quieras recordar…"
-          />
-        </Field>
-        {obligation && (
-          <label className="admin-check">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(event) => setActive(event.target.checked)}
-            />
-            <span>
-              <strong>Seguimiento activo</strong>
-              <small>
-                Desactivarlo detiene los avisos y conserva el historial.
-              </small>
-            </span>
-          </label>
-        )}
-        <FormFooter
+              </div>
+            </>
+          )}
+          {step === 2 && (
+            <>
+              <dl className="admin-confirmation">
+                <div>
+                  <dt>{ownerName}</dt>
+                  <dd>{title}</dd>
+                </div>
+                <div>
+                  <dt>Próximo vencimiento</dt>
+                  <dd>
+                    {[
+                      dueDate ? dateLabel(dueDate) : null,
+                      ownerType === "truck" && dueKm
+                        ? `${formatKm(Number(dueKm))} km`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "Pendiente de configurar"}
+                  </dd>
+                </div>
+              </dl>
+              {!obligation && kind === "SERVICE" && (
+                <>
+                  <label className="admin-check">
+                    <input
+                      type="checkbox"
+                      checked={initialRecord}
+                      onChange={(event) =>
+                        setInitialRecord(event.target.checked)
+                      }
+                    />
+                    <span>Registrar también el último servicio</span>
+                  </label>
+                  {initialRecord && (
+                    <>
+                      <div className="grid2">
+                        <Field
+                          label="Fecha y hora del servicio"
+                          error={form.fields["initialRecord.performedAt"]}
+                        >
+                          <input
+                            required
+                            type="datetime-local"
+                            value={performedAt}
+                            max={dateTimeInput()}
+                            onChange={(event) =>
+                              setPerformedAt(event.target.value)
+                            }
+                          />
+                        </Field>
+                        <Field
+                          label="Odómetro de ese servicio"
+                          error={form.fields["initialRecord.odometer"]}
+                        >
+                          <input
+                            required
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputMode="numeric"
+                            value={odometer}
+                            onChange={(event) =>
+                              setOdometer(event.target.value)
+                            }
+                          />
+                        </Field>
+                      </div>
+                      {(intervalMonths || intervalKm) && (
+                        <button
+                          className="button secondary"
+                          type="button"
+                          disabled={!performedAt || (!!intervalKm && !odometer)}
+                          onClick={() => {
+                            if (intervalMonths)
+                              setDueDate(
+                                addMonths(performedAt, Number(intervalMonths)),
+                              );
+                            if (intervalKm && odometer)
+                              setDueKm(
+                                String(Number(odometer) + Number(intervalKm)),
+                              );
+                          }}
+                        >
+                          Calcular próximo límite
+                        </button>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+              {obligation && (
+                <label className="admin-check">
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={(event) => setActive(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Seguimiento activo</strong>
+                    <small>
+                      Al desactivarlo se detienen los avisos. El historial se
+                      conserva.
+                    </small>
+                  </span>
+                </label>
+              )}
+            </>
+          )}
+        </div>
+        <StepFooter
+          step={step}
+          finalStep={2}
           busy={form.busy}
+          onBack={() => setStep(step - 1)}
           onClose={onClose}
           label={obligation ? "Guardar cambios" : "Agregar vencimiento"}
         />
@@ -1557,6 +2097,7 @@ function RenewalForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [step, setStep] = useState(0);
   const [performedAt, setPerformedAt] = useState(dateTimeInput());
   const [odometer, setOdometer] = useState("");
   const [nextDueDate, setNextDueDate] = useState(
@@ -1571,6 +2112,10 @@ function RenewalForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (form.busy) return;
+    if (step === 0) {
+      setStep(1);
+      return;
+    }
     form.begin();
     try {
       await send(`/obligations/${obligation.id}/renewals`, "POST", {
@@ -1584,135 +2129,155 @@ function RenewalForm({
       onSaved();
     } catch (error) {
       form.fail(error);
+      if (
+        error instanceof ApiError &&
+        Object.keys(error.fields).some((key) =>
+          ["performedAt", "odometer", "notes"].includes(key),
+        )
+      )
+        setStep(0);
     }
   }
   return (
     <Modal
-      title={service ? "Registrar servicio realizado" : "Registrar renovación"}
+      title={service ? "Registrar servicio" : "Renovar documento"}
+      wide
       onClose={() => {
         if (!form.busy) onClose();
       }}
     >
-      <form className="admin-form" onSubmit={submit}>
+      <form className="admin-form admin-step-form" onSubmit={submit}>
+        <FormSteps labels={["Registro", "Próximo vencimiento"]} step={step} />
         <div className="admin-renewal-context">
-          <span className="admin-item-symbol">
-            {service ? <Wrench size={22} /> : <FileCheck2 size={22} />}
-          </span>
-          <div>
-            <strong>{obligation.title}</strong>
-            <OwnerLabel obligation={obligation} />
-          </div>
+          <strong>{obligation.title}</strong>
+          <OwnerLabel obligation={obligation} />
         </div>
         <FormError message={form.message} />
-        <Field
-          label={
-            service
-              ? "Fecha y hora del servicio"
-              : "Fecha y hora de la renovación"
-          }
-          error={form.fields.performedAt}
-        >
-          <input
-            required
-            type="datetime-local"
-            max={dateTimeInput()}
-            value={performedAt}
-            onChange={(event) => setPerformedAt(event.target.value)}
-          />
-        </Field>
-        {service && (
-          <Field
-            label="Odómetro al realizar el servicio"
-            error={form.fields.odometer}
-            hint={
-              obligation.truck
-                ? `Última lectura: ${formatKm(obligation.truck.odometer)} km (${dateLabel(obligation.truck.odometerAt)}).`
-                : undefined
-            }
-          >
-            <input
-              required
-              type="number"
-              inputMode="numeric"
-              min="0"
-              step="1"
-              value={odometer}
-              onChange={(event) => setOdometer(event.target.value)}
-            />
-          </Field>
-        )}
-        <div className="admin-form-block">
-          <h3>
-            <CalendarDays size={18} />
-            Confirmá el próximo vencimiento
-          </h3>
-          <div className="grid2">
-            <Field
-              label="Próxima fecha (opcional)"
-              error={form.fields.nextDueDate}
-            >
-              <input
-                type="date"
-                min={performedAt.slice(0, 10)}
-                value={nextDueDate}
-                onChange={(event) => setNextDueDate(event.target.value)}
-              />
-            </Field>
-            {obligation.truckId && (
-              <Field
-                label="Próximo odómetro (opcional)"
-                error={form.fields.nextDueKm}
-              >
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  step="1"
-                  value={nextDueKm}
-                  onChange={(event) => setNextDueKm(event.target.value)}
+        <div className="admin-step-content" key={step}>
+          {step === 0 ? (
+            <>
+              <div className="grid2">
+                <Field
+                  label={
+                    service
+                      ? "Fecha y hora del servicio"
+                      : "Fecha y hora de renovación"
+                  }
+                  error={form.fields.performedAt}
+                >
+                  <input
+                    required
+                    type="datetime-local"
+                    max={dateTimeInput()}
+                    value={performedAt}
+                    onChange={(event) => setPerformedAt(event.target.value)}
+                  />
+                </Field>
+                {service && (
+                  <Field
+                    label="Odómetro del servicio"
+                    error={form.fields.odometer}
+                    hint={
+                      obligation.truck
+                        ? `Última lectura: ${formatKm(obligation.truck.odometer)} km (${dateLabel(obligation.truck.odometerAt)}).`
+                        : undefined
+                    }
+                  >
+                    <input
+                      required
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      step="1"
+                      value={odometer}
+                      onChange={(event) => setOdometer(event.target.value)}
+                    />
+                  </Field>
+                )}
+              </div>
+              <Field label="Observaciones (opcional)" error={form.fields.notes}>
+                <textarea
+                  rows={3}
+                  maxLength={2000}
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
                 />
               </Field>
-            )}
-          </div>
-          {(obligation.intervalMonths || obligation.intervalKm) && (
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => {
-                if (obligation.intervalMonths)
-                  setNextDueDate(
-                    addMonths(performedAt, obligation.intervalMonths),
-                  );
-                if (obligation.intervalKm && odometer)
-                  setNextDueKm(
-                    String(Number(odometer) + obligation.intervalKm),
-                  );
-              }}
-            >
-              Sugerir según la frecuencia
-            </button>
+            </>
+          ) : (
+            <>
+              <div className="grid2">
+                <Field
+                  label="Próxima fecha (opcional)"
+                  error={form.fields.nextDueDate}
+                >
+                  <input
+                    type="date"
+                    min={performedAt.slice(0, 10)}
+                    value={nextDueDate}
+                    onChange={(event) => setNextDueDate(event.target.value)}
+                  />
+                </Field>
+                {obligation.truckId && (
+                  <Field
+                    label="Próximo odómetro (opcional)"
+                    error={form.fields.nextDueKm}
+                  >
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={odometer ? Number(odometer) + 1 : 0}
+                      step="1"
+                      value={nextDueKm}
+                      onChange={(event) => setNextDueKm(event.target.value)}
+                    />
+                  </Field>
+                )}
+              </div>
+              {(obligation.intervalMonths || obligation.intervalKm) && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => {
+                    if (obligation.intervalMonths)
+                      setNextDueDate(
+                        addMonths(performedAt, obligation.intervalMonths),
+                      );
+                    if (obligation.intervalKm && odometer)
+                      setNextDueKm(
+                        String(Number(odometer) + obligation.intervalKm),
+                      );
+                  }}
+                >
+                  Sugerir según la frecuencia
+                </button>
+              )}
+              <p className="admin-field-note">
+                {nextDueDate || nextDueKm
+                  ? "Confirmá estos límites. El registro anterior se conserva en el historial."
+                  : "Sin un próximo límite, quedará pendiente de configurar."}
+              </p>
+              <dl className="admin-confirmation">
+                <div>
+                  <dt>
+                    {service ? "Servicio realizado" : "Documento renovado"}
+                  </dt>
+                  <dd>
+                    {dateLabel(businessInstant(performedAt))}
+                    {service && odometer
+                      ? ` · ${formatKm(Number(odometer))} km`
+                      : ""}
+                  </dd>
+                </div>
+              </dl>
+            </>
           )}
-          <p className="admin-field-note">
-            {nextDueDate || nextDueKm
-              ? "Revisá estos límites antes de confirmar. La renovación anterior quedará en el historial."
-              : "Si dejás ambos campos vacíos, quedará pendiente de programar."}
-          </p>
         </div>
-        <Field label="Observaciones (opcional)" error={form.fields.notes}>
-          <textarea
-            rows={3}
-            maxLength={2000}
-            placeholder={
-              service
-                ? "Ej. Se cambiaron aceite y filtros."
-                : "Ej. Renovación anual del seguro."
-            }
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-          />
-        </Field>
-        <FormFooter
+        <StepFooter
+          step={step}
+          finalStep={1}
           busy={form.busy}
+          onBack={() => setStep(0)}
           onClose={onClose}
           label={service ? "Confirmar servicio" : "Confirmar renovación"}
         />
@@ -1731,62 +2296,74 @@ function HistoryModal({
   const history = useLoad<{ items: Renewal[] }>(
     `/obligations/${obligation.id}/renewals`,
   );
+  const pageSize = 3;
+  const paged = usePagination(history.data?.items || [], pageSize);
   return (
     <Modal title="Historial de renovaciones" onClose={onClose}>
-      <div className="admin-history-title">
-        <strong>{obligation.title}</strong>
-        <OwnerLabel obligation={obligation} />
-      </div>
-      <LoadState
-        loading={history.loading}
-        error={history.error}
-        retry={history.reload}
-      />
-      {history.data?.items.length ? (
-        <ol className="admin-timeline">
-          {history.data.items.map((item) => (
-            <li key={item.id}>
-              <span className="admin-timeline-dot">
-                <Check size={13} />
-              </span>
-              <div>
-                <strong>{dateLabel(item.performedAt)}</strong>
-                {item.odometer !== null && (
-                  <span className="admin-history-km">
-                    {formatKm(item.odometer)} km
-                  </span>
-                )}
-                {item.notes && <p>{item.notes}</p>}
-                <div className="admin-history-next">
-                  <small>Próximo límite registrado</small>
-                  <span>
-                    {[
-                      item.nextDueDate ? dateLabel(item.nextDueDate) : null,
-                      item.nextDueKm !== null
-                        ? `${formatKm(item.nextDueKm)} km`
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "Sin definir"}
-                  </span>
+      <div className="admin-history-body">
+        <div className="admin-history-title">
+          <strong>{obligation.title}</strong>
+          <OwnerLabel obligation={obligation} />
+        </div>
+        <LoadState
+          loading={history.loading}
+          error={history.error}
+          retry={history.reload}
+        />
+        {history.data?.items.length ? (
+          <ol className="admin-timeline">
+            {paged.items.map((item) => (
+              <li key={item.id}>
+                <span className="admin-timeline-dot">
+                  <Check size={13} />
+                </span>
+                <div>
+                  <strong>{dateLabel(item.performedAt)}</strong>
+                  {item.odometer !== null && (
+                    <span className="admin-history-km">
+                      {formatKm(item.odometer)} km
+                    </span>
+                  )}
+                  {item.notes && <p>{item.notes}</p>}
+                  <div className="admin-history-next">
+                    <small>Próximo límite registrado</small>
+                    <span>
+                      {[
+                        item.nextDueDate ? dateLabel(item.nextDueDate) : null,
+                        item.nextDueKm !== null
+                          ? `${formatKm(item.nextDueKm)} km`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "Sin definir"}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        !history.loading &&
-        !history.error && (
-          <EmptyState
-            title="Todavía no hay renovaciones"
-            description="Los servicios y las renovaciones que registres se guardarán acá."
+              </li>
+            ))}
+          </ol>
+        ) : (
+          !history.loading &&
+          !history.error && (
+            <EmptyState
+              title="Todavía no hay renovaciones"
+              description="Los servicios y las renovaciones que registres se guardarán acá."
+            />
+          )
+        )}
+        {history.data && (
+          <Pagination
+            page={paged.page}
+            pageSize={pageSize}
+            total={history.data.items.length}
+            onPage={paged.setPage}
           />
-        )
-      )}
-      <div className="admin-form-footer">
-        <button className="button secondary" onClick={onClose}>
-          Cerrar
-        </button>
+        )}
+        <div className="admin-form-footer">
+          <button className="button secondary" onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
       </div>
     </Modal>
   );
@@ -1845,12 +2422,16 @@ export function ObligationsPage({ onNotify }: PageProps) {
     drivers.reload();
     settings.reload();
   };
+  const pageSize = usePageSize(425, 84);
+  const paged = usePagination(
+    filtered,
+    pageSize,
+    `${filter}-${search}-${showInactive}`,
+  );
   return (
     <div className="admin-page">
       <PageHeading
-        eyebrow="ANTICIPARSE HACE LA DIFERENCIA"
-        title="Servicios y vencimientos"
-        description="Mantenimiento y documentación, siempre presentes."
+        title="Vencimientos"
         action={
           <button className="button primary" onClick={() => setEditing("new")}>
             <Plus size={19} />
@@ -1862,7 +2443,7 @@ export function ObligationsPage({ onNotify }: PageProps) {
         {(
           [
             ["all", "Todos"],
-            ["attention", "Necesitan atención"],
+            ["attention", "Pendientes"],
             ["service", "Servicios"],
             ["document", "Documentos"],
           ] as const
@@ -1901,35 +2482,39 @@ export function ObligationsPage({ onNotify }: PageProps) {
         error={state.error || trucks.error || drivers.error || settings.error}
         retry={reloadAll}
       />
-      <div className="admin-obligations-list">
-        {filtered.map((item) => (
-          <article
-            key={item.id}
-            className={`panel admin-obligation ${!item.active ? "is-inactive" : ""}`}
-          >
-            <div className="admin-obligation-main">
-              <span
-                className={`admin-item-symbol ${item.status.toLowerCase()}`}
-              >
-                {item.kind === "SERVICE" ? (
-                  <Wrench size={23} />
-                ) : (
-                  <FileCheck2 size={23} />
-                )}
-              </span>
-              <div className="admin-obligation-title">
-                <h2>{item.title}</h2>
-                <OwnerLabel obligation={item} />
+      {state.data && !state.error && (
+        <section className="admin-surface admin-records admin-obligation-records">
+          <div className="admin-list-header admin-obligation-row">
+            <span>Servicio o documento</span>
+            <span>Próximo límite</span>
+            <span>Estado</span>
+            <span>Acciones</span>
+          </div>
+          {paged.items.map((item) => (
+            <article
+              key={item.id}
+              className={`admin-record-row admin-obligation-row ${!item.active ? "is-inactive" : ""}`}
+            >
+              <div className="admin-row-identity">
+                <span
+                  className={`admin-item-symbol ${item.status.toLowerCase()}`}
+                >
+                  {item.kind === "SERVICE" ? (
+                    <Wrench size={21} />
+                  ) : (
+                    <FileCheck2 size={21} />
+                  )}
+                </span>
+                <div>
+                  <h2>{item.title}</h2>
+                  <OwnerLabel obligation={item} />
+                </div>
               </div>
-              <StatusBadge status={item.status} />
-              {!item.active && <span className="badge neutral">Inactivo</span>}
-            </div>
-            <div className="admin-obligation-bottom">
-              <div>
+              <div className="admin-obligation-limit">
                 <DueSummary obligation={item} />
-                <p className="admin-obligation-remaining">
+                <small>
                   {item.status === "UNCONFIGURED"
-                    ? "Definí el próximo límite para recibir avisos."
+                    ? "Pendiente de configurar"
                     : [
                         item.daysRemaining !== null
                           ? item.daysRemaining < 0
@@ -1946,61 +2531,61 @@ export function ObligationsPage({ onNotify }: PageProps) {
                       ]
                         .filter(Boolean)
                         .join(" · ")}
-                </p>
+                </small>
               </div>
-              <div className="admin-obligation-actions">
+              <div className="admin-row-status">
+                <StatusBadge status={item.status} />
+                {!item.active && <small>Inactivo</small>}
+              </div>
+              <div className="admin-row-actions">
                 <button
-                  className="button ghost"
+                  className="button ghost admin-icon-button"
                   aria-label={`Historial de ${item.title}`}
+                  title="Historial"
                   onClick={() => setHistory(item)}
                 >
-                  <History size={17} />
-                  <span>Historial</span>
+                  <History size={19} />
                 </button>
                 <button
-                  className="button secondary"
+                  className="button ghost admin-icon-button"
+                  aria-label={`Editar ${item.title}`}
+                  title="Editar"
                   onClick={() => setEditing(item)}
                 >
-                  <Pencil size={16} />
-                  <span>Editar</span>
+                  <Pencil size={18} />
                 </button>
                 {item.active && (
                   <button
-                    className="button primary"
+                    className="button secondary"
                     onClick={() => setRenewing(item)}
                   >
-                    <Check size={17} />
                     {item.kind === "SERVICE" ? "Registrar servicio" : "Renovar"}
                   </button>
                 )}
               </div>
-            </div>
-          </article>
-        ))}
-      </div>
-      {!state.loading && !state.error && !filtered.length && (
-        <EmptyState
-          title={
-            state.data?.items.length
-              ? "No hay resultados con estos filtros"
-              : "Un recordatorio hoy, menos preocupaciones mañana"
-          }
-          description={
-            state.data?.items.length
-              ? "Probá con otro nombre o cambiá el filtro."
-              : "Agregá el próximo servicio, seguro o documento que quieras controlar."
-          }
-        >
-          {!state.data?.items.length && (
-            <button
-              className="button primary"
-              onClick={() => setEditing("new")}
-            >
-              <Plus size={18} />
-              Agregar vencimiento
-            </button>
+            </article>
+          ))}
+          {!filtered.length && (
+            <EmptyState
+              title={
+                state.data.items.length
+                  ? "No hay resultados"
+                  : "Todavía no hay vencimientos"
+              }
+              description={
+                state.data.items.length
+                  ? "Cambiá los filtros o el texto de búsqueda."
+                  : "Agregá un servicio o documento para comenzar."
+              }
+            />
           )}
-        </EmptyState>
+          <Pagination
+            page={paged.page}
+            pageSize={pageSize}
+            total={filtered.length}
+            onPage={paged.setPage}
+          />
+        </section>
       )}
       {editing && (
         <ObligationForm
@@ -2048,11 +2633,13 @@ export function ReportsPage({ onNotify }: PageProps) {
   const [truckId, setTruckId] = useState("");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
+  const pageSize = usePageSize(530, 76);
+  useEffect(() => setPage(1), [pageSize]);
   const query = new URLSearchParams({
     from,
     to,
     page: String(page),
-    pageSize: "20",
+    pageSize: String(pageSize),
     ...(driverId ? { driverId } : {}),
     ...(truckId ? { truckId } : {}),
   });
@@ -2103,9 +2690,7 @@ export function ReportsPage({ onNotify }: PageProps) {
   return (
     <div className="admin-page">
       <PageHeading
-        eyebrow="INFORMACIÓN QUE AYUDA"
-        title="Resumen de viajes"
-        description="Elegí un período y llevate los datos que necesitás."
+        title="Reportes"
         action={
           <button
             className="button primary"
@@ -2117,7 +2702,7 @@ export function ReportsPage({ onNotify }: PageProps) {
           </button>
         }
       />
-      <section className="panel admin-report-filters">
+      <section className="admin-report-filters">
         <div className="admin-report-fields">
           <Field label="Desde">
             <input
@@ -2166,10 +2751,6 @@ export function ReportsPage({ onNotify }: PageProps) {
             </select>
           </Field>
         </div>
-        <p className="admin-field-note">
-          Los totales y el Excel incluyen todos los viajes del filtro, no solo
-          los que aparecen en esta página.
-        </p>
       </section>
       <LoadState
         loading={state.loading && !state.data}
@@ -2184,7 +2765,7 @@ export function ReportsPage({ onNotify }: PageProps) {
         <>
           <div className="admin-report-totals" aria-live="polite">
             <div>
-              <span>Viajes realizados</span>
+              <span>Viajes del período</span>
               <strong>{state.data.totals.count}</strong>
             </div>
             <div>
@@ -2194,12 +2775,12 @@ export function ReportsPage({ onNotify }: PageProps) {
               </strong>
             </div>
             <div>
-              <span>Viáticos registrados</span>
+              <span>Viáticos</span>
               <strong>{formatMoney(state.data.totals.allowance)}</strong>
             </div>
           </div>
           <section
-            className="panel admin-report-results"
+            className="admin-surface admin-report-results"
             aria-busy={state.loading}
           >
             {state.data.items.length ? (
@@ -2289,35 +2870,13 @@ export function ReportsPage({ onNotify }: PageProps) {
                 description="Elegí otras fechas o probá sin filtrar por chofer y camión."
               />
             )}
-            {state.data.total > state.data.pageSize && (
-              <div className="admin-pagination">
-                <span>
-                  Página {page} de{" "}
-                  {Math.ceil(state.data.total / state.data.pageSize)}
-                </span>
-                <div>
-                  <button
-                    className="button secondary"
-                    aria-label="Página anterior"
-                    disabled={page <= 1 || state.loading}
-                    onClick={() => setPage((value) => value - 1)}
-                  >
-                    <ChevronLeft size={18} />
-                  </button>
-                  <button
-                    className="button secondary"
-                    aria-label="Página siguiente"
-                    disabled={
-                      page * state.data.pageSize >= state.data.total ||
-                      state.loading
-                    }
-                    onClick={() => setPage((value) => value + 1)}
-                  >
-                    <ChevronRight size={18} />
-                  </button>
-                </div>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              pageSize={state.data.pageSize}
+              total={state.data.total}
+              onPage={setPage}
+              busy={state.loading}
+            />
           </section>
         </>
       )}
@@ -2355,67 +2914,49 @@ function SettingsForm({
     }
   }
   return (
-    <form className="panel admin-settings-form admin-form" onSubmit={submit}>
-      <div className="admin-section-head">
-        <div>
-          <span className="admin-settings-icon">
-            <Mail size={24} />
-          </span>
-          <h2>Un resumen en tu correo</h2>
-          <p>
-            Los pendientes llegan juntos, todos los días a las 08:00, hora de
-            Argentina.
-          </p>
-        </div>
-      </div>
+    <form
+      className="admin-surface admin-settings-form admin-form"
+      onSubmit={submit}
+    >
       <FormError message={form.message} />
-      <Field
-        label="Correo para recibir los avisos"
-        error={form.fields.recipientEmail}
-        hint="Si no hay pendientes, no se envía correo."
-      >
-        <input
-          type="email"
-          autoComplete="email"
-          placeholder="nombre@correo.com"
-          value={recipientEmail}
-          maxLength={254}
-          onChange={(event) => setRecipientEmail(event.target.value)}
-        />
-      </Field>
-      <div
-        className={`admin-mail-status ${settings.smtpConfigured ? "configured" : ""}`}
-      >
-        <span>
-          {settings.smtpConfigured ? (
-            <CheckCircle2 size={20} />
-          ) : (
-            <CircleAlert size={20} />
-          )}
-        </span>
+      <section className="admin-setting-section">
         <div>
-          <strong>
-            {settings.smtpConfigured
-              ? "Envío de correos configurado"
-              : "El envío de correos aún no está configurado"}
-          </strong>
-          <p>
-            {settings.smtpConfigured
-              ? "Los envíos y los intentos fallidos se registran en el historial."
-              : "Podés guardar el destinatario. El envío se habilitará cuando se configure la cuenta de correo del sistema."}
-          </p>
+          <h2>Correo de avisos</h2>
+          <p>A las 08:00 de Argentina, cuando haya pendientes.</p>
         </div>
-      </div>
-      <div className="admin-form-block">
-        <h3>
-          <Bell size={18} />
-          Anticipación predeterminada
-        </h3>
-        <p>
-          Se usa al agregar nuevos vencimientos. Cada vencimiento puede tener
-          sus propios valores.
-        </p>
-        <div className="grid2">
+        <div className="admin-setting-fields">
+          <Field label="Destinatario" error={form.fields.recipientEmail}>
+            <input
+              type="email"
+              autoComplete="email"
+              placeholder="nombre@correo.com"
+              value={recipientEmail}
+              maxLength={254}
+              onChange={(event) => setRecipientEmail(event.target.value)}
+            />
+          </Field>
+          <div
+            className={`admin-mail-status ${settings.smtpConfigured ? "configured" : ""}`}
+          >
+            {settings.smtpConfigured ? (
+              <CheckCircle2 size={18} />
+            ) : (
+              <CircleAlert size={18} />
+            )}
+            <span>
+              {settings.smtpConfigured
+                ? "Envío configurado"
+                : "Falta configurar la cuenta de envío"}
+            </span>
+          </div>
+        </div>
+      </section>
+      <section className="admin-setting-section">
+        <div>
+          <h2>Anticipación de avisos</h2>
+          <p>Valores iniciales para nuevos vencimientos.</p>
+        </div>
+        <div className="admin-setting-fields grid2">
           <Field label="Días antes" error={form.fields.warningDays}>
             <input
               required
@@ -2438,7 +2979,7 @@ function SettingsForm({
             />
           </Field>
         </div>
-      </div>
+      </section>
       <div className="admin-form-footer">
         <button className="button primary" disabled={form.busy}>
           {form.busy ? "Guardando…" : "Guardar preferencias"}
@@ -2448,95 +2989,117 @@ function SettingsForm({
     </form>
   );
 }
-
 export function SettingsPage({ onNotify }: PageProps) {
   const settings = useLoad<Settings>("/settings");
   const notifications = useLoad<{ items: Notification[] }>("/notifications");
+  const [tab, setTab] = useState("settings");
+  const pageSize = usePageSize(430, 100);
+  const paged = usePagination(notifications.data?.items || [], pageSize);
   return (
     <div className="admin-page">
-      <PageHeading
-        eyebrow="A TU MANERA"
-        title="Avisos y preferencias"
-        description="Elegí dónde recibir los recordatorios de tu transporte."
-      />
-      <LoadState
-        loading={settings.loading && !settings.data}
-        error={settings.error}
-        retry={settings.reload}
-      />
-      <div className="admin-settings-layout">
-        {settings.data && (
-          <SettingsForm
-            key={`${settings.data.recipientEmail}-${settings.data.warningDays}-${settings.data.warningKm}`}
-            settings={settings.data}
-            onSaved={() => {
-              settings.reload();
-              onNotify("Preferencias guardadas");
-            }}
+      <PageHeading title="Preferencias" />
+      <div className="admin-tabs" aria-label="Preferencias e historial">
+        <button
+          className={tab === "settings" ? "active" : ""}
+          aria-pressed={tab === "settings"}
+          onClick={() => setTab("settings")}
+        >
+          Avisos
+        </button>
+        <button
+          className={tab === "history" ? "active" : ""}
+          aria-pressed={tab === "history"}
+          onClick={() => setTab("history")}
+        >
+          Historial de correos
+        </button>
+      </div>
+      {tab === "settings" ? (
+        <>
+          <LoadState
+            loading={settings.loading && !settings.data}
+            error={settings.error}
+            retry={settings.reload}
           />
-        )}
-        <section className="panel admin-section admin-notification-panel">
-          <div className="admin-section-head">
-            <div>
-              <p className="eyebrow">SEGUIMIENTO</p>
-              <h2>Historial de correos</h2>
-            </div>
-            <button
-              className="button ghost"
-              onClick={notifications.reload}
-              aria-label="Actualizar historial de correos"
-            >
-              <RefreshCw size={18} />
-            </button>
-          </div>
+          {settings.data && !settings.error && (
+            <SettingsForm
+              key={`${settings.data.recipientEmail}-${settings.data.warningDays}-${settings.data.warningKm}`}
+              settings={settings.data}
+              onSaved={() => {
+                settings.reload();
+                onNotify("Preferencias guardadas");
+              }}
+            />
+          )}
+        </>
+      ) : (
+        <>
           <LoadState
             loading={notifications.loading && !notifications.data}
             error={notifications.error}
             retry={notifications.reload}
           />
-          {notifications.data?.items.length ? (
-            <div className="admin-notification-list">
-              {notifications.data.items.map((item) => (
-                <article key={item.id}>
-                  <div className="admin-notification-head">
-                    <strong>{dateLabel(item.date)}</strong>
+          {notifications.data && !notifications.error && (
+            <section className="admin-surface admin-records">
+              <div className="admin-section-toolbar">
+                <span className="admin-result-count">
+                  {notifications.data.items.length} envíos
+                </span>
+                <button className="button ghost" onClick={notifications.reload}>
+                  <RefreshCw size={17} />
+                  Actualizar
+                </button>
+              </div>
+              <div className="admin-notification-list">
+                {paged.items.map((item) => (
+                  <article key={item.id}>
+                    <div className="admin-notification-date">
+                      <strong>{dateLabel(item.date)}</strong>
+                      <small>
+                        {item.sentAt
+                          ? formatDate(item.sentAt, true)
+                          : `${item.attempts} ${item.attempts === 1 ? "intento" : "intentos"}`}
+                      </small>
+                    </div>
+                    <div className="admin-notification-detail">
+                      <p>{item.recipient}</p>
+                      {item.error && (
+                        <p className="admin-notification-error">
+                          {item.status === "FAILED"
+                            ? "Se agotaron los intentos. Revisá la cuenta de correo."
+                            : item.status === "SUPERSEDED"
+                              ? "Reemplazado por un resumen más reciente."
+                              : item.status === "CANCELLED"
+                                ? "Los pendientes ya fueron resueltos."
+                                : "Pendiente de envío. Revisá la cuenta de correo."}
+                        </p>
+                      )}
+                    </div>
                     <span
                       className={`badge ${item.status === "SENT" ? "success" : item.status === "FAILED" ? "danger" : "neutral"}`}
                     >
                       {statusText(item.status)}
                     </span>
-                  </div>
-                  <p>{item.recipient}</p>
-                  {item.error && (
-                    <p className="admin-notification-error">
-                      {item.status === "FAILED"
-                        ? "Se agotaron los intentos de envío. Revisá la configuración del correo."
-                        : item.status === "SUPERSEDED"
-                          ? "Reemplazado por un resumen más reciente."
-                          : item.status === "CANCELLED"
-                            ? "Los vencimientos pendientes ya fueron resueltos."
-                            : "El correo está pendiente. Se enviará cuando la cuenta esté disponible."}
-                    </p>
-                  )}
-                  <small>
-                    {item.sentAt
-                      ? `Enviado ${formatDate(item.sentAt)}`
-                      : `${item.attempts} ${item.attempts === 1 ? "intento" : "intentos"}`}
-                  </small>
-                </article>
-              ))}
-            </div>
-          ) : (
-            !notifications.loading &&
-            !notifications.error && (
-              <EmptyState
-                title="Todavía no hay envíos"
-                description="Acá vas a ver cuándo se enviaron los resúmenes y si alguno necesita atención."
+                  </article>
+                ))}
+              </div>
+              {!notifications.data.items.length && (
+                <EmptyState
+                  title="Todavía no hay envíos"
+                  description="Los avisos enviados y fallidos aparecerán acá."
+                  icon={<Mail size={26} />}
+                />
+              )}
+              <Pagination
+                page={paged.page}
+                pageSize={pageSize}
+                total={notifications.data.items.length}
+                onPage={paged.setPage}
               />
-            )
+            </section>
           )}
-        </section>
-      </div>
+        </>
+      )}
     </div>
   );
 }

@@ -125,3 +125,22 @@ export type PageProps = {
   onNavigate: (page: string) => void;
   onNotify: (message: string, kind?: "success" | "error") => void;
 };
+export interface Invitation {
+  id: string;
+  role: "ADMIN" | "DRIVER";
+  name: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  status: "PENDING" | "EXPIRED" | "REVOKED" | "ACCEPTED";
+  createdAt: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  createdByName: string;
+}
+export interface InvitationList {
+  items: Invitation[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

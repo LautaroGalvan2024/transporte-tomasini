@@ -165,9 +165,9 @@ export function Modal({
       if (dialogs[dialogs.length - 1] !== ref.current) return;
       if (e.key === "Escape" && dismissible) closeRef.current();
       if (e.key === "Tab") {
-        const list = ref.current?.querySelectorAll<HTMLElement>(
+        const list = Array.from(ref.current?.querySelectorAll<HTMLElement>(
           'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]',
-        );
+        ) || []).filter(element => element.getClientRects().length > 0);
         if (!list?.length) return;
         const first = list[0],
           last = list[list.length - 1];

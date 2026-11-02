@@ -13,6 +13,7 @@ import {
 } from "./validation.js";
 import { truckDtos, driverDtos, audit, activeTruck } from "./models.js";
 import { hashPassword } from "./password.js";
+import { revokeDriverInvitations } from "./invitations.js";
 
 export function trucksRouter() {
   const router = Router();
@@ -97,6 +98,7 @@ export function driversRouter() {
       input = driverUpdate.parse(req.body),
       user = currentUser(req);
     await transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${id}::uuid FOR UPDATE`;
       const old = await tx.driver.findUnique({
         where: { id },
         include: { user: true },
@@ -121,6 +123,13 @@ export function driversRouter() {
         (input.username && input.username !== old.user.username)
       )
         await tx.session.deleteMany({ where: { userId: old.userId } });
+      if (input.active === false)
+        await revokeDriverInvitations(
+          tx,
+          id,
+          user.id,
+          "Chofer desactivado por administración.",
+        );
       const safe = (d: typeof old) => ({
         name: d.user.name,
         username: d.user.username,
@@ -138,6 +147,7 @@ export function driversRouter() {
       user = currentUser(req);
     const passwordHash = await hashPassword(input.password);
     await transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${id}::uuid FOR UPDATE`;
       const driver = await tx.driver.findUnique({ where: { id } });
       ensure(driver, 404, "No se encontró el chofer.");
       await tx.user.update({
@@ -145,6 +155,12 @@ export function driversRouter() {
         data: { passwordHash, mustChangePassword: true },
       });
       await tx.session.deleteMany({ where: { userId: driver.userId } });
+      await revokeDriverInvitations(
+        tx,
+        id,
+        user.id,
+        "Contraseña restablecida por administración.",
+      );
       await audit(tx, user.id, "DRIVER", id, "PASSWORD_RESET");
     });
     res.sendStatus(204);
