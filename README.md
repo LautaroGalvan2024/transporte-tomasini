@@ -58,6 +58,7 @@ La ruta Python corresponde al runtime disponible en esta computadora; en otro eq
 - Express/TypeScript/Zod, sesiones PostgreSQL y Prisma en `backend/`.
 - Contrato de API: [docs/api-contract.md](docs/api-contract.md).
 - Despliegue aislado, respaldos, límites y recuperación: [docs/deployment.md](docs/deployment.md).
+- Pruebas y publicación automática de `main`: [docs/github-actions.md](docs/github-actions.md).
 - Evidencia y límites de verificación: [docs/verification.md](docs/verification.md).
 
 El sistema utiliza el logo oficial en WebP y el lema «Tu carga, nuestro compromiso». Los nombres reales, patentes y lecturas iniciales se cargan desde administración. Las cuentas se crean mediante **Equipo → Invitar**; el usuario puede ser un nombre sin espacios o un DNI sin puntos. Se guarda como texto y admite números, incluyendo ceros iniciales. No se verifica la identidad a partir del número ingresado. Para correo real faltan la configuración SMTP privada y el destinatario; el tablero funciona independientemente del envío externo.
