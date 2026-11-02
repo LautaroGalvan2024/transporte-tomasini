@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getDb, transaction } from "./db.js";
+import { getDb, lockTrucks, transaction, type Tx } from "./db.js";
 import { currentUser, requireAdmin } from "./auth.js";
 import { ensure } from "./errors.js";
 import {
@@ -14,6 +14,30 @@ import {
 import { truckDtos, driverDtos, audit, activeTruck } from "./models.js";
 import { hashPassword } from "./password.js";
 import { revokeDriverInvitations } from "./invitations.js";
+import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
+import { odometerBody, ODOMETER_ADJUSTED } from "./odometer.js";
+
+async function unassignTruck(tx: Tx, truckId: string, actorId: string) {
+  const drivers = await tx.driver.findMany({
+    where: { assignedTruckId: truckId },
+    select: { id: true },
+  });
+  await tx.driver.updateMany({
+    where: { assignedTruckId: truckId },
+    data: { assignedTruckId: null },
+  });
+  for (const driver of drivers)
+    await audit(
+      tx,
+      actorId,
+      "DRIVER",
+      driver.id,
+      "TRUCK_UNASSIGNED",
+      { assignedTruckId: truckId },
+      { assignedTruckId: null },
+      "Camión dado de baja.",
+    );
+}
 
 export function trucksRouter() {
   const router = Router();
@@ -28,6 +52,8 @@ export function trucksRouter() {
       "La lectura inicial no puede ser futura.",
     );
     const id = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       const truck = await tx.truck.create({
         data: { ...data, initialOdometerAt: new Date(data.initialOdometerAt) },
       });
@@ -40,17 +66,93 @@ export function trucksRouter() {
     const id = uuid.parse(req.params.id),
       input = truckUpdate.parse(req.body);
     await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, currentUser(req).id, req.sessionId);
+      await lockTrucks(tx, [id]);
       const old = await tx.truck.findUnique({ where: { id } });
       ensure(old, 404, "No se encontró el camión.");
       const row = await tx.truck.update({ where: { id }, data: input });
       if (input.active === false)
-        await tx.driver.updateMany({
-          where: { assignedTruckId: id },
-          data: { assignedTruckId: null },
-        });
+        await unassignTruck(tx, id, currentUser(req).id);
       await audit(tx, currentUser(req).id, "TRUCK", id, "UPDATED", old, row);
     });
     res.json((await truckDtos()).find((t) => t.id === id));
+  });
+  router.delete("/:id", async (req, res) => {
+    const id = uuid.parse(req.params.id),
+      actor = currentUser(req);
+    const row = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, actor.id, req.sessionId);
+      await lockTrucks(tx, [id]);
+      const old = await tx.truck.findUnique({ where: { id } });
+      ensure(old, 404, "No se encontró el camión.");
+      if (old.active) {
+        const updated = await tx.truck.update({
+          where: { id },
+          data: { active: false },
+        });
+        await unassignTruck(tx, id, actor.id);
+        await audit(tx, actor.id, "TRUCK", id, "DEACTIVATED", old, updated);
+      }
+      return (await truckDtos(tx, id))[0];
+    });
+    res.json(row);
+  });
+  router.patch("/:id/odometer", async (req, res) => {
+    const id = uuid.parse(req.params.id),
+      input = odometerBody.parse(req.body),
+      actor = currentUser(req);
+    const result = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, actor.id, req.sessionId);
+      await lockTrucks(tx, [id]);
+      const current = (await truckDtos(tx, id))[0];
+      ensure(current, 404, "No se encontró el camión.");
+      ensure(
+        current.active,
+        409,
+        "Reactivá el camión antes de corregir su odómetro.",
+      );
+      ensure(
+        current.odometer === input.expectedOdometer &&
+          Date.parse(current.odometerAt) ===
+            Date.parse(input.expectedOdometerAt),
+        409,
+        "El odómetro cambió desde que lo abriste. Actualizá la lectura y revisá tu corrección.",
+        "ODOMETER_VERSION_CONFLICT",
+      );
+      if (current.odometer === input.odometer) return current;
+      const now = Date.now();
+      ensure(
+        Date.parse(current.odometerAt) <= now,
+        409,
+        "Hay una lectura con fecha futura. Revisá esa fecha antes de corregir el odómetro.",
+        "FUTURE_ODOMETER_READING",
+      );
+      const at = new Date(Math.max(now, Date.parse(current.odometerAt) + 1));
+      await tx.audit.create({
+        data: {
+          entity: "TRUCK",
+          entityId: id,
+          action: ODOMETER_ADJUSTED,
+          actorId: actor.id,
+          createdAt: at,
+          before: {
+            version: 1,
+            odometer: current.odometer,
+            odometerAt: current.odometerAt,
+          },
+          after: {
+            version: 1,
+            odometer: input.odometer,
+            odometerAt: at.toISOString(),
+          },
+        },
+      });
+      return (await truckDtos(tx, id))[0];
+    });
+    res.json(result);
   });
   return router;
 }
@@ -65,6 +167,8 @@ export function driversRouter() {
       user = currentUser(req);
     const passwordHash = await hashPassword(input.password);
     const id = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       if (input.assignedTruckId) await activeTruck(tx, input.assignedTruckId);
       const account = await tx.user.create({
         data: {
@@ -98,12 +202,20 @@ export function driversRouter() {
       input = driverUpdate.parse(req.body),
       user = currentUser(req);
     await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${id}::uuid FOR UPDATE`;
       const old = await tx.driver.findUnique({
         where: { id },
         include: { user: true },
       });
       ensure(old, 404, "No se encontró el chofer.");
+      ensure(
+        old.user.role === "DRIVER",
+        409,
+        "Este perfil pertenece a un administrador. Gestioná su acceso desde Usuarios.",
+        "DRIVER_ROLE_REQUIRED",
+      );
       if (input.assignedTruckId) await activeTruck(tx, input.assignedTruckId);
       await tx.user.update({
         where: { id: old.userId },
@@ -115,7 +227,11 @@ export function driversRouter() {
       });
       const row = await tx.driver.update({
         where: { id },
-        data: { phone: input.phone, assignedTruckId: input.assignedTruckId },
+        data: {
+          phone: input.phone,
+          assignedTruckId:
+            input.active === false ? null : input.assignedTruckId,
+        },
         include: { user: true },
       });
       if (
@@ -123,12 +239,15 @@ export function driversRouter() {
         (input.username && input.username !== old.user.username)
       )
         await tx.session.deleteMany({ where: { userId: old.userId } });
-      if (input.active === false)
+      if (
+        input.active === false ||
+        (input.username && input.username !== old.user.username)
+      )
         await revokeDriverInvitations(
           tx,
           id,
           user.id,
-          "Chofer desactivado por administración.",
+          "Cambió el estado o usuario del chofer.",
         );
       const safe = (d: typeof old) => ({
         name: d.user.name,
@@ -147,9 +266,20 @@ export function driversRouter() {
       user = currentUser(req);
     const passwordHash = await hashPassword(input.password);
     await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${id}::uuid FOR UPDATE`;
-      const driver = await tx.driver.findUnique({ where: { id } });
+      const driver = await tx.driver.findUnique({
+        where: { id },
+        include: { user: true },
+      });
       ensure(driver, 404, "No se encontró el chofer.");
+      ensure(
+        driver.user.role === "DRIVER",
+        409,
+        "Este perfil pertenece a un administrador. Gestioná su acceso desde Usuarios.",
+        "DRIVER_ROLE_REQUIRED",
+      );
       await tx.user.update({
         where: { id: driver.userId },
         data: { passwordHash, mustChangePassword: true },

@@ -18,9 +18,12 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Route,
   ShieldCheck,
   Truck as TruckIcon,
+  Trash2,
+  UserRoundCog,
   UserRound,
   Wrench,
 } from "lucide-react";
@@ -37,6 +40,8 @@ import type {
   Settings,
   TripList,
   Truck,
+  UserAccess,
+  Role,
 } from "../types";
 import {
   EmptyState,
@@ -342,7 +347,7 @@ export function AdminDashboard({ onNavigate }: PageProps) {
   const pageSize = usePageSize(440, 84);
   const pending =
     state.data?.obligations.filter(
-      (item) => item.active && item.status !== "OK",
+      (item) => item.active && item.ownerActive && item.status !== "OK",
     ) || [];
   const alerts = usePagination(pending, pageSize);
   const trucks = usePagination(
@@ -583,7 +588,6 @@ function TruckForm({
   const [label, setLabel] = useState(truck?.label || "");
   const [initial, setInitial] = useState("");
   const [at, setAt] = useState(dateTimeInput());
-  const [active, setActive] = useState(truck?.active ?? true);
   const form = useFormStatus();
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -594,7 +598,7 @@ function TruckForm({
         truck ? `/trucks/${truck.id}` : "/trucks",
         truck ? "PATCH" : "POST",
         truck
-          ? { plate: plate.trim().toUpperCase(), label: label.trim(), active }
+          ? { plate: plate.trim().toUpperCase(), label: label.trim() }
           : {
               plate: plate.trim().toUpperCase(),
               label: label.trim(),
@@ -676,19 +680,6 @@ function TruckForm({
             </div>
           </div>
         )}
-        {truck && (
-          <label className="admin-check">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(event) => setActive(event.target.checked)}
-            />
-            <span>
-              <strong>Camión activo</strong>
-              <small>Disponible para nuevos viajes y asignaciones.</small>
-            </span>
-          </label>
-        )}
         <FormFooter
           busy={form.busy}
           onClose={onClose}
@@ -699,10 +690,224 @@ function TruckForm({
   );
 }
 
+function OdometerForm({
+  truck,
+  onClose,
+  onSaved,
+}: {
+  truck: Truck;
+  onClose: () => void;
+  onSaved: (updated: Truck) => void;
+}) {
+  const [reference, setReference] = useState(truck);
+  const [odometer, setOdometer] = useState(String(truck.odometer));
+  const [conflict, setConflict] = useState(false);
+  const [refreshed, setRefreshed] = useState(false);
+  const form = useFormStatus();
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy || conflict) return;
+    form.begin();
+    try {
+      const updated = await send<Truck>(
+        `/trucks/${truck.id}/odometer`,
+        "PATCH",
+        {
+          odometer: Number(odometer),
+          expectedOdometer: reference.odometer,
+          expectedOdometerAt: reference.odometerAt,
+        },
+      );
+      onSaved(updated);
+    } catch (error) {
+      setConflict(
+        error instanceof ApiError && error.code === "ODOMETER_VERSION_CONFLICT",
+      );
+      form.fail(error);
+    }
+  }
+  async function refresh() {
+    if (form.busy) return;
+    form.begin();
+    try {
+      const result = await api<{ items: Truck[] }>("/trucks");
+      const current = result.items.find((item) => item.id === truck.id);
+      if (!current)
+        throw new Error(
+          "No encontramos el camión. Volvé a la flota y actualizá la lista.",
+        );
+      setReference(current);
+      setConflict(false);
+      setRefreshed(true);
+      form.clear();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  return (
+    <Modal
+      title="Editar kilometraje"
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      <form className="admin-form admin-odometer-form" onSubmit={submit}>
+        <div className="admin-access-person">
+          <Gauge size={24} />
+          <div>
+            <strong>{truck.plate}</strong>
+            <span>{truck.label}</span>
+          </div>
+        </div>
+        <div className="admin-odometer-reference">
+          <span>
+            Odómetro actual <strong>{formatKm(reference.odometer)} km</strong>
+          </span>
+          <small>Lectura del {formatDate(reference.odometerAt)}</small>
+        </div>
+        <Field
+          label="Nuevo odómetro (km)"
+          error={form.fields.odometer}
+          hint="Ingresá el número que marca el tablero del camión."
+        >
+          <input
+            required
+            type="number"
+            inputMode="numeric"
+            min="0"
+            max="9999999"
+            step="1"
+            value={odometer}
+            onChange={(event) => setOdometer(event.target.value)}
+          />
+        </Field>
+        <FormError message={form.message} />
+        {conflict && (
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={refresh}
+          >
+            <RefreshCw size={17} />
+            {form.busy ? "Actualizando…" : "Actualizar lectura actual"}
+          </button>
+        )}
+        {refreshed && (
+          <p className="admin-form-intro" role="status">
+            Lectura actualizada. Conservamos el valor que ingresaste; revisalo
+            antes de guardar.
+          </p>
+        )}
+        {!reference.active && (
+          <p className="form-error" role="alert">
+            Este camión está dado de baja. Reactivalo desde Flota para editar el
+            kilometraje.
+          </p>
+        )}
+        <div className="admin-form-footer">
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            className="button primary"
+            disabled={
+              form.busy ||
+              conflict ||
+              !reference.active ||
+              Number(odometer) === reference.odometer
+            }
+          >
+            {form.busy ? "Guardando…" : "Guardar kilometraje"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function TruckStatusForm({
+  truck,
+  onClose,
+  onSaved,
+}: {
+  truck: Truck;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const form = useFormStatus();
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy) return;
+    form.begin();
+    try {
+      await send(
+        `/trucks/${truck.id}`,
+        truck.active ? "DELETE" : "PATCH",
+        truck.active ? undefined : { active: true },
+      );
+      onSaved();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  return (
+    <Modal
+      title={truck.active ? "Dar de baja camión" : "Reactivar camión"}
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      <form className="admin-form" onSubmit={submit}>
+        <div className="admin-access-person">
+          <TruckIcon size={24} />
+          <div>
+            <strong>{truck.plate}</strong>
+            <span>{truck.label}</span>
+          </div>
+        </div>
+        <p className="admin-form-intro">
+          {truck.active
+            ? "Dejará de estar disponible para nuevos viajes y se quitará de sus choferes habituales. Sus viajes y servicios seguirán guardados. Podés reactivarlo después."
+            : "Volverá a estar disponible para viajes. Podés asignarle un chofer desde Equipo."}
+        </p>
+        <FormError message={form.message} />
+        <div className="admin-form-footer">
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            className={`button ${truck.active ? "danger" : "primary"}`}
+            disabled={form.busy}
+          >
+            {form.busy
+              ? "Guardando…"
+              : truck.active
+                ? "Dar de baja"
+                : "Reactivar camión"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export function FleetPage({ onNotify }: PageProps) {
   const trucks = useLoad<{ items: Truck[] }>("/trucks");
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
   const [editing, setEditing] = useState<Truck | "new" | null>(null);
+  const [odometerTruck, setOdometerTruck] = useState<Truck | null>(null);
+  const [statusTruck, setStatusTruck] = useState<Truck | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const items =
     trucks.data?.items.filter((truck) => showInactive || truck.active) || [];
@@ -747,7 +952,7 @@ export function FleetPage({ onNotify }: PageProps) {
             <span>Chofer habitual</span>
             <span>Odómetro</span>
             <span>Estado</span>
-            <span />
+            <span>Acciones</span>
           </div>
           {paged.items.map((truck) => {
             const assigned =
@@ -783,14 +988,38 @@ export function FleetPage({ onNotify }: PageProps) {
                 >
                   {truck.active ? "Activo" : "Inactivo"}
                 </span>
-                <button
-                  className="button ghost"
-                  aria-label={`Editar camión ${truck.plate}`}
-                  onClick={() => setEditing(truck)}
-                >
-                  <Pencil size={17} />
-                  <span>Editar</span>
-                </button>
+                <div className="admin-row-actions admin-fleet-actions">
+                  <button
+                    className="button ghost"
+                    aria-label={`Editar camión ${truck.plate}`}
+                    onClick={() => setEditing(truck)}
+                  >
+                    <Pencil size={17} />
+                    <span>Editar</span>
+                  </button>
+                  {truck.active && (
+                    <button
+                      className="button ghost admin-icon-button"
+                      title="Editar kilometraje"
+                      aria-label={`Editar kilometraje de ${truck.plate}`}
+                      onClick={() => setOdometerTruck(truck)}
+                    >
+                      <Gauge size={20} />
+                    </button>
+                  )}
+                  <button
+                    className={`button ghost admin-icon-button ${truck.active ? "admin-destructive-action" : ""}`}
+                    title={truck.active ? "Dar de baja" : "Reactivar"}
+                    aria-label={`${truck.active ? "Dar de baja" : "Reactivar"} camión ${truck.plate}`}
+                    onClick={() => setStatusTruck(truck)}
+                  >
+                    {truck.active ? (
+                      <Trash2 size={19} />
+                    ) : (
+                      <RotateCcw size={19} />
+                    )}
+                  </button>
+                </div>
               </article>
             );
           })}
@@ -825,6 +1054,381 @@ export function FleetPage({ onNotify }: PageProps) {
           }}
         />
       )}
+      {odometerTruck && (
+        <OdometerForm
+          truck={odometerTruck}
+          onClose={() => setOdometerTruck(null)}
+          onSaved={(updated) => {
+            setOdometerTruck(null);
+            trucks.reload();
+            onNotify(
+              `Kilometraje de ${updated.plate} actualizado a ${formatKm(updated.odometer)} km`,
+            );
+          }}
+        />
+      )}
+      {statusTruck && (
+        <TruckStatusForm
+          truck={statusTruck}
+          onClose={() => setStatusTruck(null)}
+          onSaved={() => {
+            setStatusTruck(null);
+            trucks.reload();
+            drivers.reload();
+            onNotify(
+              statusTruck.active
+                ? "Camión dado de baja. El historial se conserva."
+                : "Camión reactivado",
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function UserRoleForm({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: UserAccess;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [role, setRole] = useState<Role>(account.role);
+  const form = useFormStatus();
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy || role === account.role) return;
+    form.begin();
+    try {
+      await send(`/users/${account.id}`, "PATCH", { role });
+      onSaved();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  return (
+    <Modal
+      title="Cambiar rol"
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      <form className="admin-form" onSubmit={submit}>
+        <div className="admin-access-person">
+          <UserRoundCog size={24} />
+          <div>
+            <strong>{account.name}</strong>
+            <span>{account.username}</span>
+          </div>
+        </div>
+        <Field label="Rol del usuario" error={form.fields.role}>
+          <select
+            value={role}
+            onChange={(event) => setRole(event.target.value as Role)}
+          >
+            <option value="DRIVER">Chofer</option>
+            <option value="ADMIN">Administrador</option>
+          </select>
+        </Field>
+        <p className="admin-form-intro">
+          {role === "ADMIN"
+            ? "Podrá administrar usuarios, camiones, viajes y vencimientos."
+            : "Podrá cargar y consultar sus viajes, con el camión que le asignes desde Equipo."}
+        </p>
+        {role !== account.role && (
+          <div className="admin-callout">
+            <CircleAlert size={18} />
+            <span>
+              Deberá volver a ingresar para usar el nuevo rol.{" "}
+              {account.role === "DRIVER"
+                ? "Su camión habitual quedará sin asignar. "
+                : ""}
+              Sus viajes e historial se conservan.
+              {!account.active && " El acceso seguirá desactivado."}
+            </span>
+          </div>
+        )}
+        <FormError message={form.message} />
+        <div className="admin-form-footer">
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            className="button primary"
+            disabled={form.busy || role === account.role}
+          >
+            {form.busy ? "Guardando…" : "Guardar rol"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function UserStatusForm({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: UserAccess;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const form = useFormStatus();
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy) return;
+    form.begin();
+    try {
+      await send(
+        `/users/${account.id}`,
+        account.active ? "DELETE" : "PATCH",
+        account.active ? undefined : { active: true },
+      );
+      onSaved();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  return (
+    <Modal
+      title={account.active ? "Desactivar usuario" : "Reactivar usuario"}
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      <form className="admin-form" onSubmit={submit}>
+        <div className="admin-access-person">
+          <UserRound size={24} />
+          <div>
+            <strong>{account.name}</strong>
+            <span>
+              {account.username} ·{" "}
+              {account.role === "ADMIN" ? "Administrador" : "Chofer"}
+            </span>
+          </div>
+        </div>
+        <p className="admin-form-intro">
+          {account.active
+            ? `Se cerrará su sesión y no podrá volver a ingresar. ${account.role === "DRIVER" ? "Quedará sin camión habitual. " : ""}Sus viajes e historial seguirán guardados. Podés reactivar el acceso cuando lo necesites.`
+            : `Podrá volver a ingresar con su usuario y contraseña, con el rol indicado.${account.role === "DRIVER" ? " Asignale un camión desde Equipo cuando lo necesite." : ""}`}
+        </p>
+        <FormError message={form.message} />
+        <div className="admin-form-footer">
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            className={`button ${account.active ? "danger" : "primary"}`}
+            disabled={form.busy}
+          >
+            {form.busy
+              ? "Guardando…"
+              : account.active
+                ? "Desactivar usuario"
+                : "Reactivar usuario"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export function UsersPage({ user, onNotify }: PageProps) {
+  const accounts = useLoad<{ items: UserAccess[] }>("/users");
+  const drivers = useLoad<{ items: Driver[] }>("/drivers");
+  const [role, setRole] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [editing, setEditing] = useState<UserAccess | null>(null);
+  const [statusAccount, setStatusAccount] = useState<UserAccess | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const pageSize = usePageSize(360, 84);
+  const items =
+    accounts.data?.items.filter(
+      (item) =>
+        (role === "all" || item.role === role) &&
+        (status === "all" || item.active === (status === "active")),
+    ) || [];
+  const paged = usePagination(items, pageSize, `${role}:${status}`);
+  return (
+    <div className="admin-page">
+      <PageHeading
+        title="Usuarios"
+        action={
+          <button className="button primary" onClick={() => setInviting(true)}>
+            <Link2 size={18} />
+            Invitar usuario
+          </button>
+        }
+      />
+      <div className="admin-toolbar admin-user-toolbar">
+        <span className="admin-result-count">
+          {items.length} {items.length === 1 ? "usuario" : "usuarios"}
+        </span>
+        <div className="admin-user-filters">
+          <label>
+            <span className="sr-only">Filtrar por rol</span>
+            <select
+              value={role}
+              onChange={(event) => setRole(event.target.value)}
+            >
+              <option value="all">Todos los roles</option>
+              <option value="ADMIN">Administradores</option>
+              <option value="DRIVER">Choferes</option>
+            </select>
+          </label>
+          <label>
+            <span className="sr-only">Filtrar por estado</span>
+            <select
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+            >
+              <option value="all">Todos los estados</option>
+              <option value="active">Activos</option>
+              <option value="inactive">Desactivados</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <LoadState
+        loading={accounts.loading && !accounts.data}
+        error={accounts.error}
+        retry={accounts.reload}
+      />
+      {accounts.data && !accounts.error && (
+        <section className="admin-surface admin-records">
+          <div className="admin-list-header admin-user-row">
+            <span>Usuario</span>
+            <span>Rol</span>
+            <span>Acceso</span>
+            <span>Acciones</span>
+          </div>
+          {paged.items.map((account) => (
+            <article
+              key={account.id}
+              className="admin-record-row admin-user-row"
+            >
+              <div className="admin-row-identity">
+                <span className="admin-avatar">
+                  {account.name
+                    .split(" ")
+                    .slice(0, 2)
+                    .map((part) => part[0])
+                    .join("")}
+                </span>
+                <div>
+                  <h2>{account.name}</h2>
+                  <p>
+                    {account.username}
+                    {account.id === user.id ? " · Vos" : ""}
+                  </p>
+                </div>
+              </div>
+              <span className="admin-row-secondary admin-user-role">
+                {account.role === "ADMIN" ? (
+                  <ShieldCheck size={17} />
+                ) : (
+                  <UserRound size={17} />
+                )}
+                {account.role === "ADMIN" ? "Administrador" : "Chofer"}
+              </span>
+              <span
+                className={`badge ${account.active ? "success" : "neutral"}`}
+              >
+                {account.active ? "Activo" : "Desactivado"}
+              </span>
+              <div className="admin-row-actions">
+                {account.id === user.id ? (
+                  <span className="admin-self-account">Tu cuenta</span>
+                ) : (
+                  <>
+                    <button
+                      className="button ghost"
+                      onClick={() => setEditing(account)}
+                      aria-label={`Cambiar rol de ${account.name}`}
+                    >
+                      <UserRoundCog size={17} />
+                      Cambiar rol
+                    </button>
+                    <button
+                      className={`button ghost ${account.active ? "admin-destructive-action" : ""}`}
+                      onClick={() => setStatusAccount(account)}
+                      aria-label={`${account.active ? "Desactivar" : "Reactivar"} a ${account.name}`}
+                    >
+                      {account.active ? (
+                        <Trash2 size={17} />
+                      ) : (
+                        <RotateCcw size={17} />
+                      )}
+                      {account.active ? "Desactivar" : "Reactivar"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </article>
+          ))}
+          {!items.length && (
+            <EmptyState
+              title="No hay usuarios con estos filtros"
+              description="Probá con otro rol o estado."
+            />
+          )}
+          <Pagination
+            page={paged.page}
+            pageSize={pageSize}
+            total={items.length}
+            onPage={paged.setPage}
+          />
+        </section>
+      )}
+      {editing && (
+        <UserRoleForm
+          account={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            accounts.reload();
+            drivers.reload();
+            onNotify("Rol actualizado");
+          }}
+        />
+      )}
+      {statusAccount && (
+        <UserStatusForm
+          account={statusAccount}
+          onClose={() => setStatusAccount(null)}
+          onSaved={() => {
+            setStatusAccount(null);
+            accounts.reload();
+            drivers.reload();
+            onNotify(
+              statusAccount.active
+                ? "Usuario desactivado. El historial se conserva."
+                : "Usuario reactivado",
+            );
+          }}
+        />
+      )}
+      {inviting && (
+        <InvitationForm
+          drivers={drivers.data?.items || []}
+          onClose={() => setInviting(false)}
+          onSaved={accounts.reload}
+        />
+      )}
     </div>
   );
 }
@@ -847,7 +1451,6 @@ function DriverForm({
     driver?.assignedTruckId || "",
   );
   const [password, setPassword] = useState("");
-  const [active, setActive] = useState(driver?.active ?? true);
   const form = useFormStatus();
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -862,7 +1465,7 @@ function DriverForm({
           username: username.trim(),
           phone: phone.trim() || null,
           assignedTruckId: assignedTruckId || null,
-          ...(driver ? { active } : { password }),
+          ...(!driver ? { password } : {}),
         },
       );
       onSaved();
@@ -946,22 +1549,6 @@ function DriverForm({
               onChange={(event) => setPassword(event.target.value)}
             />
           </Field>
-        )}
-        {driver && (
-          <label className="admin-check">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(event) => setActive(event.target.checked)}
-            />
-            <span>
-              <strong>Acceso activo</strong>
-              <small>
-                Al desactivarlo se cierran sus sesiones y se conserva el
-                historial.
-              </small>
-            </span>
-          </label>
         )}
         <FormFooter
           busy={form.busy}
@@ -1387,7 +1974,7 @@ function InvitationsPanel({
     </>
   );
 }
-export function DriversPage({ onNotify }: PageProps) {
+export function DriversPage({ onNotify, onNavigate }: PageProps) {
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
   const trucks = useLoad<{ items: Truck[] }>("/trucks");
   const [tab, setTab] = useState("drivers");
@@ -1488,22 +2075,32 @@ export function DriversPage({ onNotify }: PageProps) {
               <span
                 className={`badge ${driver.active ? "success" : "neutral"}`}
               >
-                {driver.active ? "Activo" : "Inactivo"}
+                {driver.role === "ADMIN"
+                  ? "Administrador"
+                  : driver.active
+                    ? "Activo"
+                    : "Inactivo"}
               </span>
               <div className="admin-row-actions">
                 <button
                   className="button ghost"
-                  onClick={() => setEditing(driver)}
+                  onClick={() =>
+                    driver.role === "ADMIN"
+                      ? onNavigate("users")
+                      : setEditing(driver)
+                  }
                 >
                   <Pencil size={17} />
-                  Editar
+                  {driver.role === "ADMIN" ? "Gestionar usuario" : "Editar"}
                 </button>
-                <button
-                  className="button ghost"
-                  onClick={() => setPasswordDriver(driver)}
-                >
-                  Restablecer acceso
-                </button>
+                {driver.role === "DRIVER" && (
+                  <button
+                    className="button ghost"
+                    onClick={() => setPasswordDriver(driver)}
+                  >
+                    Restablecer acceso
+                  </button>
+                )}
               </div>
             </article>
           ))}
@@ -2380,7 +2977,8 @@ export function ObligationsPage({ onNotify }: PageProps) {
   const [editing, setEditing] = useState<Obligation | "new" | null>(null);
   const [renewing, setRenewing] = useState<Obligation | null>(null);
   const [history, setHistory] = useState<Obligation | null>(null);
-  const active = state.data?.items.filter((item) => item.active) || [];
+  const active =
+    state.data?.items.filter((item) => item.active && item.ownerActive) || [];
   const counts = {
     all: active.length,
     attention: active.filter(
@@ -2395,9 +2993,12 @@ export function ObligationsPage({ onNotify }: PageProps) {
   const filtered = (state.data?.items || [])
     .filter(
       (item) =>
-        (showInactive || item.active) &&
+        (showInactive || (item.active && item.ownerActive)) &&
         (filter === "all" ||
-          (filter === "attention" && item.status !== "OK") ||
+          (filter === "attention" &&
+            item.active &&
+            item.ownerActive &&
+            item.status !== "OK") ||
           (filter === "service" && item.kind === "SERVICE") ||
           (filter === "document" && item.kind === "DOCUMENT")) &&
         `${item.title} ${item.truck?.plate || ""} ${item.driver?.name || ""}`
@@ -2493,7 +3094,7 @@ export function ObligationsPage({ onNotify }: PageProps) {
           {paged.items.map((item) => (
             <article
               key={item.id}
-              className={`admin-record-row admin-obligation-row ${!item.active ? "is-inactive" : ""}`}
+              className={`admin-record-row admin-obligation-row ${!item.active || !item.ownerActive ? "is-inactive" : ""}`}
             >
               <div className="admin-row-identity">
                 <span
@@ -2513,29 +3114,41 @@ export function ObligationsPage({ onNotify }: PageProps) {
               <div className="admin-obligation-limit">
                 <DueSummary obligation={item} />
                 <small>
-                  {item.status === "UNCONFIGURED"
-                    ? "Pendiente de configurar"
-                    : [
-                        item.daysRemaining !== null
-                          ? item.daysRemaining < 0
-                            ? `Hace ${Math.abs(item.daysRemaining)} días`
-                            : item.daysRemaining === 0
-                              ? "Vence hoy"
-                              : `En ${item.daysRemaining} días`
-                          : null,
-                        item.kmRemaining !== null
-                          ? item.kmRemaining <= 0
-                            ? `${formatKm(Math.abs(item.kmRemaining))} km sobre el límite`
-                            : `Faltan ${formatKm(item.kmRemaining)} km`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
+                  {!item.ownerActive
+                    ? "Conservado en el historial"
+                    : item.status === "UNCONFIGURED"
+                      ? "Pendiente de configurar"
+                      : [
+                          item.daysRemaining !== null
+                            ? item.daysRemaining < 0
+                              ? `Hace ${Math.abs(item.daysRemaining)} días`
+                              : item.daysRemaining === 0
+                                ? "Vence hoy"
+                                : `En ${item.daysRemaining} días`
+                            : null,
+                          item.kmRemaining !== null
+                            ? item.kmRemaining <= 0
+                              ? `${formatKm(Math.abs(item.kmRemaining))} km sobre el límite`
+                              : `Faltan ${formatKm(item.kmRemaining)} km`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                 </small>
               </div>
               <div className="admin-row-status">
-                <StatusBadge status={item.status} />
-                {!item.active && <small>Inactivo</small>}
+                {item.ownerActive ? (
+                  <StatusBadge status={item.status} />
+                ) : (
+                  <span className="badge neutral">Inactivo</span>
+                )}
+                {!item.ownerActive ? (
+                  <small>
+                    {item.truckId ? "Camión dado de baja" : "Chofer inactivo"}
+                  </small>
+                ) : (
+                  !item.active && <small>Inactivo</small>
+                )}
               </div>
               <div className="admin-row-actions">
                 <button
@@ -2546,15 +3159,17 @@ export function ObligationsPage({ onNotify }: PageProps) {
                 >
                   <History size={19} />
                 </button>
-                <button
-                  className="button ghost admin-icon-button"
-                  aria-label={`Editar ${item.title}`}
-                  title="Editar"
-                  onClick={() => setEditing(item)}
-                >
-                  <Pencil size={18} />
-                </button>
-                {item.active && (
+                {item.ownerActive && (
+                  <button
+                    className="button ghost admin-icon-button"
+                    aria-label={`Editar ${item.title}`}
+                    title="Editar"
+                    onClick={() => setEditing(item)}
+                  >
+                    <Pencil size={18} />
+                  </button>
+                )}
+                {item.active && item.ownerActive && (
                   <button
                     className="button secondary"
                     onClick={() => setRenewing(item)}

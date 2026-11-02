@@ -8,6 +8,11 @@ export interface User {
   mustChangePassword: boolean;
   driverId?: string | null;
 }
+export interface UserAccess extends User {
+  createdAt: string;
+  updatedAt: string;
+  driverId: string | null;
+}
 export interface Truck {
   id: string;
   plate: string;
@@ -25,6 +30,8 @@ export interface Driver {
   username: string;
   phone: string | null;
   active: boolean;
+  role: Role;
+  accountActive: boolean;
   assignedTruckId: string | null;
   truck?: Truck | null;
 }
@@ -71,6 +78,7 @@ export interface Obligation {
   notes: string | null;
   active: boolean;
   version: number;
+  ownerActive: boolean;
   status: ObligationStatus;
   daysRemaining: number | null;
   kmRemaining: number | null;

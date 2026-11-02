@@ -49,6 +49,7 @@ import {
   AdminDashboard,
   FleetPage,
   DriversPage,
+  UsersPage,
   ObligationsPage,
   ReportsPage,
   SettingsPage,
@@ -61,6 +62,7 @@ const destinations = [
   { id: "trips", label: "Viajes", Icon: Route },
   { id: "fleet", label: "Camiones", Icon: TruckIcon },
   { id: "drivers", label: "Equipo", Icon: Users },
+  { id: "users", label: "Usuarios", Icon: ShieldCheck },
   { id: "obligations", label: "Vencimientos", Icon: CalendarDays },
   { id: "reports", label: "Reportes", Icon: FileSpreadsheet },
   { id: "settings", label: "Configuración", Icon: Settings2 },
@@ -280,6 +282,12 @@ export function App() {
       case "drivers":
         return user?.role === "ADMIN" ? (
           <DriversPage {...props} />
+        ) : (
+          <DriverHome {...props} />
+        );
+      case "users":
+        return user?.role === "ADMIN" ? (
+          <UsersPage {...props} />
         ) : (
           <DriverHome {...props} />
         );

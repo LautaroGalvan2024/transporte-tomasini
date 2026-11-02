@@ -9,7 +9,7 @@
     "typecheck": "prisma generate && tsc --noEmit",
     "start": "node dist/server.js",
     "test": "tsx --test tests/*.test.ts",
-    "test:integration": "node --env-file=.env.test --import tsx --test --test-concurrency=1 tests/integration.test.ts tests/invitations.test.ts tests/transaction.test.ts",
+    "test:integration": "node --env-file=.env.test --import tsx --test --test-concurrency=1 tests/integration.test.ts tests/invitations.test.ts tests/transaction.test.ts tests/users.test.ts tests/odometer.test.ts tests/obligation-owners.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "admin:create": "tsx scripts/bootstrap-admin.ts",

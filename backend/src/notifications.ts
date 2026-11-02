@@ -84,7 +84,10 @@ export async function runNotificationJob(
   if (!settings.recipientEmail)
     return { sent: 0, pending: 0, reason: "NO_RECIPIENT" };
   const alerts = (await obligationDtos(undefined, db, now)).filter(
-    (o) => o.active && (o.status === "OVERDUE" || o.status === "UPCOMING"),
+    (o) =>
+      o.active &&
+      o.ownerActive &&
+      (o.status === "OVERDUE" || o.status === "UPCOMING"),
   );
   if (alerts.length === 0) {
     await db.notification.updateMany({

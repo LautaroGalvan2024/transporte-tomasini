@@ -1,13 +1,14 @@
 import { Prisma, type Trip, type Truck } from "@prisma/client";
 import { getDb, type Tx } from "./db.js";
 import type { AuthUser } from "./auth.js";
-import {
-  calculateStatus,
-  dateOnly,
-  validateReadings,
-  type Reading,
-} from "./domain.js";
+import { calculateStatus, dateOnly, type Reading } from "./domain.js";
 import { ensure } from "./errors.js";
+import {
+  adjustmentReading,
+  odometerAdjustments,
+  ODOMETER_ADJUSTED,
+  validateAdjustedHistory,
+} from "./odometer.js";
 
 export const tripInclude = {
   driver: { include: { user: true } },
@@ -37,8 +38,9 @@ export function tripDto(row: TripRow) {
   };
 }
 
-export async function truckDtos(db: Tx = getDb()) {
+export async function truckDtos(db: Tx = getDb(), truckId?: string) {
   const rows = await db.truck.findMany({
+    where: truckId ? { id: truckId } : undefined,
     orderBy: { plate: "asc" },
     include: {
       trips: {
@@ -57,6 +59,22 @@ export async function truckDtos(db: Tx = getDb()) {
       },
     },
   });
+  const adjustments = await db.audit.findMany({
+    where: {
+      entity: "TRUCK",
+      action: ODOMETER_ADJUSTED,
+      entityId: { in: rows.map((row) => row.id) },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { entityId: true, after: true },
+  });
+  const latestAdjustment = new Map<
+    string,
+    ReturnType<typeof adjustmentReading>
+  >();
+  for (const row of adjustments)
+    if (!latestAdjustment.has(row.entityId))
+      latestAdjustment.set(row.entityId, adjustmentReading(row.after));
   return rows.map((row) => {
     const readings = [
       { at: row.initialOdometerAt, km: row.initialOdometer },
@@ -64,6 +82,7 @@ export async function truckDtos(db: Tx = getDb()) {
       ...row.obligations.flatMap((o) =>
         o.renewals.map((r) => ({ at: r.performedAt, km: r.odometer! })),
       ),
+      ...(latestAdjustment.has(row.id) ? [latestAdjustment.get(row.id)!] : []),
     ];
     readings.sort((a, b) => b.at.getTime() - a.at.getTime() || b.km - a.km);
     return {
@@ -95,7 +114,9 @@ export async function driverDtos(user: AuthUser, db: Tx = getDb()) {
     name: row.user.name,
     username: row.user.username,
     phone: row.phone,
-    active: row.user.active,
+    role: row.user.role,
+    accountActive: row.user.active,
+    active: row.user.active && row.user.role === "DRIVER",
     assignedTruckId: row.assignedTruckId,
     truck: row.assignedTruckId
       ? (truckMap.get(row.assignedTruckId) ?? null)
@@ -151,6 +172,9 @@ export async function obligationDtos(
       warningKm: row.warningKm,
       notes: row.notes,
       active: row.active,
+      ownerActive: row.truckId
+        ? truck?.active === true
+        : row.driver?.user.active === true && row.driver.user.role === "DRIVER",
       version: row.version,
       ...calculateStatus(row, truck?.odometer ?? null, now),
       truck,
@@ -218,7 +242,10 @@ export async function validateTruckHistory(
     })),
     ...(extraReading ? [extraReading] : []),
   ];
-  validateReadings(readings);
+  validateAdjustedHistory(readings, await odometerAdjustments(tx, truckId), [
+    ...trips,
+    ...(candidate ? [candidate] : []),
+  ]);
   return truck;
 }
 
@@ -283,6 +310,10 @@ export async function activeDriver(tx: Tx, id: string) {
     where: { id },
     include: { user: true },
   });
-  ensure(driver?.user.active, 400, "Seleccioná un chofer activo.");
+  ensure(
+    driver?.user.active && driver.user.role === "DRIVER",
+    400,
+    "Seleccioná un chofer activo.",
+  );
   return driver;
 }
