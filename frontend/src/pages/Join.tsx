@@ -264,9 +264,9 @@ export function JoinPage({
                       />
                     </Field>
                     <Field
-                      label="Nombre de usuario"
+                      label="Usuario o DNI"
                       error={fields.username}
-                      hint="Lo vas a usar para ingresar."
+                      hint="Elegí un nombre sin espacios o tu DNI sin puntos."
                     >
                       <input
                         value={username}

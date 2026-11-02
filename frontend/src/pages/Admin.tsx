@@ -890,8 +890,8 @@ function DriverForm({
         </Field>
         <div className="grid2">
           <Field
-            label="Usuario para ingresar"
-            hint="Un nombre simple, sin espacios."
+            label="Usuario o DNI"
+            hint="Un nombre sin espacios o el DNI sin puntos."
             error={form.fields.username}
           >
             <input
