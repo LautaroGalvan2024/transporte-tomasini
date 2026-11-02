@@ -99,6 +99,27 @@ Si falla después de activar código nuevo, se restablece el enlace anterior y s
 
 Una única autenticación sudo cubre actualización y entrega. Se descargan recibo, evidencia antes/después, plan y respaldo previo con ACL privada; no se vuelve a exportar la credencial inicial. El estado local queda en `.local/deployments/<hash-corto>/state.json`. El respaldo previo se verifica con `scripts/restore-production-backup.mjs` en el cluster local exclusivo. Ante un fallo, el actualizador prepara diagnóstico redactado privado para que pueda revisarse sin otra autenticación sudo.
 
+## GitHub Actions: releases de código sin cambios de esquema
+
+El repositorio `LautaroGalvan2024/transporte-tomasini` ejecuta verificaciones al recibir cambios y publica únicamente desde `main`. La clave Ed25519 de Actions pertenece al usuario exclusivo `tomasini-ci`; nunca se copia a GitHub la clave operativa de Mozzi. La clave privada se genera localmente en `.local/ci` y se carga como secreto `TOMASINI_DEPLOY_KEY` del environment de producción, restringido a `main`. Las variables son `TOMASINI_DEPLOY_HOST`, `TOMASINI_DEPLOY_USER` y `TOMASINI_DEPLOY_KNOWN_HOSTS`; las huellas del host deben estar verificadas previamente, sin aceptar claves nuevas automáticamente.
+
+El único comando SSH admitido es `deploy SHA256 COMMIT`, con un tar.gz en stdin. La clave tiene `restrict` y un forced command fijo; no habilita shell interactivo, PTY, forwarding ni SCP. El usuario tiene una sola regla sudo: un entrypoint root, sin argumentos, que vuelve a validar el protocolo. El código operativo en `/opt/tomasini/ops/ci` pertenece a root y no se actualiza desde el release subido.
+
+El receptor limita el archivo comprimido a 3 MiB, el contenido a 64 MiB y 5.000 entradas; rechaza rutas ajenas, duplicados, enlaces y archivos especiales. También limita la descompresión antes de interpretar los encabezados tar. El esquema Prisma y todos sus archivos de migración deben coincidir exactamente con el release activo y el historial aplicado. Una migración nueva requiere despliegue manual revisado; CI no habilita el migrador, ejecuta SQL de escritura ni inicializa usuarios.
+
+La preparación Linux usa `DynamicUser`, un volumen ext4 exclusivo de 768 MiB respaldado por un archivo privado, RAM máxima de 1 GiB y CPU del 40 %. Solo el código de entrada y Node son visibles mediante bind mounts de lectura; los hogares y datos de otras aplicaciones quedan ocultos. `/tmp` y `/var/tmp` apuntan a subdirectorios del mismo volumen limitado; antes de ejecutar npm se verifica que ambos pertenecen a ese dispositivo. Se conservan hasta 1 MiB de log privado y se detiene un build que emita más de 8 MiB. El árbol generado se revisa antes de copiarlo al release root-owned; los hardlinks normales de esbuild solo se admiten cuando todos sus nombres están dentro del workspace. El volumen propio se desmonta al terminar; un build fallido conserva su imagen para revisión. La composición de `DynamicUser`, `StateDirectory` y mounts sigue la [documentación de systemd](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html).
+
+Antes de activar código, se crea un respaldo nuevo y se comprueban `api.env`, datos, historial y PID/configuración/HTTP de Mozzi y Horizontes. Solo se cambia `current` y reinicia `tomasini.service`. Un fallo posterior devuelve el código anterior; nunca restaura automáticamente una base ni ejecuta SQL inverso. El recibo privado, respaldo y diagnóstico quedan en `/opt/tomasini/private/ci/<hash>` y `/opt/tomasini/backups`; stdout contiene únicamente estado, commit y hashes de versiones. Releases y respaldos de despliegue se conservan: revisar espacio antes de retirarlos y mantener siempre el activo y el anterior.
+
+Bootstrap único, después de revisar los helpers:
+
+```powershell
+& '.\scripts\prepare-ci-setup.ps1' -PublicKeyPath '.local/ci/tomasini-ci-ed25519.pub'
+& '.\scripts\start-setup-ci.ps1' -SetupManifest '<launcher.json generado>'
+```
+
+El bootstrap requiere una sola autenticación sudo, crea recursos exclusivos y no reinicia la aplicación. Antes de habilitar la clave ejecuta `npm ci` y Prisma generate completos sobre el código público del release actual, en el mismo sandbox; verifica permisos, runtime, enlaces y esquema. El recibo público se descarga sin otra autenticación. Si algún paso falla, no se repite automáticamente: se deshabilita el acceso recién creado y se conserva evidencia. Tras configurarlo, comprobar con la clave CI que un comando como `true` es rechazado; luego verificar un despliegue real de `main` y el recibo antes de considerar terminado el flujo.
+
 ## Correo, respaldos y operación
 
 - `tomasini-notifications.timer` despierta cada 15 minutos. El backend decide cuándo corresponde el resumen de las 08:00 de Argentina y maneja reintentos/deduplicación. Configurar `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM` en `api.env` con editor/entrada privada; no enviarlas por chat ni versionarlas. Hasta completar y probar SMTP, los avisos externos no están operativos.
@@ -113,7 +134,7 @@ Una única autenticación sudo cubre actualización y entrega. Se descargan reci
 ```powershell
 node --test scripts/test-infra.mjs
 node --test scripts/test-migrations.mjs
-& 'C:\Users\Nico\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m unittest discover -s infra -p '*vps.py' -v
+& 'C:\Users\Nico\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m unittest discover -s infra -p 'test_*.py' -v
 node scripts/db.mjs check
 node scripts/db.mjs backup-restore-check
 ```

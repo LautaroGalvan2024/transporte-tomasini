@@ -558,14 +558,14 @@ function Login({
             <ErrorState message={initialError} onRetry={onRetry} />
           )}
           <form onSubmit={submit}>
-            <Field label="Usuario">
+            <Field label="Usuario o DNI">
               <input
                 autoComplete="username"
                 autoCapitalize="none"
                 autoCorrect="off"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Tu nombre de usuario"
+                placeholder="Ej. juan.perez o 30123456"
                 required
                 disabled={busy}
               />

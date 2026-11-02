@@ -86,9 +86,16 @@ class InstallerTests(unittest.TestCase):
             base = Path(directory)
             (base / 'private').mkdir()
             (base / 'private/failed.json').write_text('{"phase":"migraciones propias","rollbackIssues":[]}')
+            original_stat = Path.stat
+            def protected_fixture_stat(path, *stat_args, **stat_kwargs):
+                result = original_stat(path, *stat_args, **stat_kwargs)
+                if path == base / 'private/failed.json':
+                    fields = list(result)
+                    fields[4] = 0  # Simulate only this fixture's reviewed root ownership.
+                    return installer.os.stat_result(fields)
+                return result
             args = SimpleNamespace(release_sha='a' * 64, node_sha='a' * 64, release='archive', node_archive='node')
-            with patch.object(installer, 'BASE', base), patch.object(installer.sys, 'platform', 'linux'), patch.object(installer.os, 'geteuid', return_value=0, create=True), patch.object(installer, 'sha256', return_value='a' * 64), patch.object(installer, 'run') as command:
-                # Windows reports st_uid=0 for a local file, matching the protected-root fixture.
+            with patch.object(installer, 'BASE', base), patch.object(installer.sys, 'platform', 'linux'), patch.object(installer.os, 'geteuid', return_value=0, create=True), patch.object(installer, 'sha256', return_value='a' * 64), patch.object(Path, 'stat', protected_fixture_stat), patch.object(installer, 'run') as command:
                 with self.assertRaisesRegex(installer.InstallationError, 'solo admite'):
                     installer.validate_resume(args)
                 command.assert_not_called()
