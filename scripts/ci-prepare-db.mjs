@@ -113,3 +113,45 @@ export async function prepareDatabase() {
   );
   return environment;
 }
+
+export async function restrictMigrationHistory(environment) {
+  assertRunner();
+  const migrator = new Client({
+    connectionString: environment.MIGRATION_DATABASE_URL,
+    connectionTimeoutMillis: 5000,
+  });
+  try {
+    await migrator.connect();
+    await migrator.query(
+      "REVOKE ALL ON TABLE tomasini._prisma_migrations FROM tomasini_test_app",
+    );
+  } finally {
+    await migrator.end();
+  }
+  const app = new Client({
+    connectionString: environment.DATABASE_URL,
+    connectionTimeoutMillis: 5000,
+  });
+  try {
+    await app.connect();
+    const identity = (
+      await app.query(
+        "SELECT current_database() AS database, current_user AS username, has_table_privilege(current_user, 'tomasini._prisma_migrations', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS history_access, has_schema_privilege(current_user, 'tomasini', 'CREATE') AS can_create",
+      )
+    ).rows[0];
+    if (
+      identity.database !== "tomasini_test" ||
+      identity.username !== "tomasini_test_app" ||
+      identity.history_access ||
+      identity.can_create
+    )
+      throw new Error(
+        "El rol de aplicación CI tiene permisos de migración inesperados.",
+      );
+  } finally {
+    await app.end();
+  }
+  console.log(
+    "Permisos CI verificados: app sin acceso al historial de migraciones ni CREATE.",
+  );
+}

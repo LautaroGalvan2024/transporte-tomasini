@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 import { unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertRunner, prepareDatabase } from "./ci-prepare-db.mjs";
+import {
+  assertRunner,
+  prepareDatabase,
+  restrictMigrationHistory,
+} from "./ci-prepare-db.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function run(command, args, env) {
@@ -47,6 +51,7 @@ try {
     ["run", "db:migrate", "--workspace", "@tomasini/backend"],
     integrationEnvironment,
   );
+  await restrictMigrationHistory(testEnvironment);
   run(
     "npm",
     ["run", "test:integration", "--workspace", "@tomasini/backend"],
