@@ -25,3 +25,14 @@ Navegador local con datos ficticios y PostgreSQL exclusivo:
 Evidencia local en `output/qa/refinement/` (ignorada por Git): capturas de administración, chofer y alta, y mediciones en `viewport-audit.json`. No contiene enlaces de invitación ni credenciales.
 
 Esta auditoría técnica no reemplaza una prueba de uso con los choferes reales.
+
+## Publicación verificada
+
+Release `1bce449e4b5e8c4a` publicado el 2 de noviembre de 2026 en `https://tomasini.72-60-50-213.sslip.io`.
+
+- HTML y assets coinciden con el paquete revisado; el logo se entrega como `image/webp` y coincide byte por byte con el original convertido.
+- Readiness 200; administración de invitaciones rechaza solicitudes sin sesión (401) y la vista previa rechaza entradas inválidas (400). No se crearon cuentas ni invitaciones de prueba en producción.
+- Migración aditiva aplicada. Configuración privada preservada y rol migrador nuevamente sin LOGIN ni contraseña.
+- Mozzi y Horizontes mantienen respuestas HTTP 200, los mismos PID y las mismas huellas de configuración anteriores.
+- Respaldo previo descargado, validado y restaurado satisfactoriamente en PostgreSQL local exclusivo. La base temporal de comprobación fue retirada.
+- El proceso remoto terminó correctamente; el canal SSH del lanzador quedó abierto sin procesos hijos. Se descargó la entrega por un canal independiente y se cerró únicamente la conexión local propia, sin repetir la actualización. Estado y evidencia se conservaron en `.local/deployments/1bce449e4b5e8c4a/verification-download/`.
