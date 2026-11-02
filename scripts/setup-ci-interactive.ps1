@@ -37,7 +37,10 @@ exec sudo -k python3 -I setup_ci.py --manifest setup.json
   Write-Host 'Ingresá sudo en esta terminal. La clave privada CI permanece local y no se sube a la VPS.'
   Write-CiState 'awaiting_sudo_or_configuring'
   & ssh @sshOptions -t mozzi@72.60.50.213 $command
-  if ($LASTEXITCODE -ne 0) { throw 'El bootstrap se detuvo; no repetir. Revisar evidencia privada de Tomasini.' }
+  $result = $LASTEXITCODE
+  & scp @sshOptions -o BatchMode=yes -- ("mozzi@72.60.50.213:" + $remote + '/ci-build-diagnostic.json') (Join-Path $directory 'ci-build-diagnostic.json') 2>$null
+  $diagnosticDownloaded = $LASTEXITCODE -eq 0
+  if ($result -ne 0) { throw ('El bootstrap se detuvo; no repetir. Diagnóstico descargado: ' + $diagnosticDownloaded) }
   Write-CiState 'downloading_public_receipt'
   $receiptPath = Join-Path $directory 'ci-public-receipt.json'
   & scp @sshOptions -o BatchMode=yes -- ("mozzi@72.60.50.213:" + $remote + '/ci-public-receipt.json') $receiptPath

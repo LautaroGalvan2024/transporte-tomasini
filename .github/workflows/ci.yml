@@ -50,3 +50,9 @@ jobs:
         run: node scripts/ci-check.mjs
         env:
           TOMASINI_CI_ADMIN_PASSWORD: ephemeral-runner-only
+      - name: Exercise the real systemd deployment sandbox
+        timeout-minutes: 17
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_WORKSPACE,RUNNER_TOOL_CACHE \
+            /usr/bin/python3 -I "$GITHUB_WORKSPACE/infra/ci_sandbox_smoke.py" \
+            --workspace "$GITHUB_WORKSPACE" --node "$(command -v node)"

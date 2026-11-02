@@ -16,9 +16,21 @@ spec.loader.exec_module(ci)
 setup_spec = importlib.util.spec_from_file_location('setup_ci', Path(__file__).with_name('setup_ci.py'))
 setup = importlib.util.module_from_spec(setup_spec)
 setup_spec.loader.exec_module(setup)
+repair_spec = importlib.util.spec_from_file_location('repair_ci', Path(__file__).with_name('repair_ci_bootstrap.py'))
+repair = importlib.util.module_from_spec(repair_spec)
+repair_spec.loader.exec_module(repair)
 
 
 class CiDeployTests(unittest.TestCase):
+    def test_recovery_accepts_only_clean_pre_access_failure(self):
+        good = {'status': 'needs_review', 'keyDisabled': True, 'sudoRuleRemoved': True, 'cleanupIssues': []}
+        repair.validate_failure(good)
+        for field, value in [('status', 'ci_access_configured'), ('keyDisabled', False), ('sudoRuleRemoved', False), ('cleanupIssues', ['authorized_keys'])]:
+            with self.assertRaises(RuntimeError):
+                repair.validate_failure({**good, field: value})
+        with self.assertRaises(RuntimeError):
+            repair.validate_failure({})
+
     def test_upload_alarm_is_disabled_before_waiting_for_a_long_build(self):
         events = []
         child = Mock()
@@ -114,6 +126,11 @@ class CiDeployTests(unittest.TestCase):
         self.assertIn('/.ci-var-tmp:/var/tmp', joined)
         self.assertLess(joined.index('stat -c %d /tmp'), joined.index('ci --include=dev'))
         self.assertLess(joined.index('stat -c %d /var/tmp'), joined.index('ci --include=dev'))
+        prefixes = [argument.split('IPAddressDeny=', 1)[1] for argument in arguments if argument.startswith('--property=IPAddressDeny=')]
+        self.assertEqual(len(prefixes), 6)
+        self.assertTrue(all(' ' not in prefix for prefix in prefixes))
+        self.assertIn('127.0.0.0/8', prefixes)
+        self.assertIn('::1/128', prefixes)
         for forbidden in ['DATABASE_URL', 'EnvironmentFile=', 'db:migrate', 'admin:create']:
             self.assertNotIn(forbidden, joined)
 

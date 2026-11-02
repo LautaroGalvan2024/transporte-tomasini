@@ -59,7 +59,23 @@ def root_file(path, content, mode=0o600, created=None):
     os.chmod(path, mode)
 
 
-def bootstrap(args):
+def export_diagnostic(source, probe_directory, error=None):
+    require(source.parent == Path('/home/mozzi') and re.fullmatch(r'tomasini-ci-(?:bootstrap|repair)-[a-f0-9]{16}', source.name), 'Unexpected diagnostic destination.')
+    payload = {'status': 'failed' if error else 'probe_passed', 'errorType': type(error).__name__ if error else None,
+               'message': str(error)[:2000] if error else None, 'buildLog': ''}
+    if probe_directory is not None:
+        require(probe_directory.parent == BASE / 'private/ci' and re.fullmatch('[a-f0-9]{16}', probe_directory.name), 'Unexpected probe diagnostic source.')
+        log = probe_directory / 'build.log'
+        if log.is_file() and not log.is_symlink():
+            with log.open('rb') as stream:
+                payload['buildLog'] = stream.read(1024 * 1024).decode('utf-8', errors='replace')
+    destination = source / 'ci-build-diagnostic.json'
+    root_file(destination, json.dumps(payload, indent=2))
+    identity = pwd.getpwnam('mozzi')
+    os.chown(destination, identity.pw_uid, identity.pw_gid)
+
+
+def bootstrap(args, recovery=None):
     require(os.geteuid() == 0 and sys.platform.startswith('linux'), 'Run the reviewed bootstrap with sudo on the VPS.')
     os.umask(0o077)
     source = Path(__file__).resolve().parent
@@ -76,7 +92,14 @@ def bootstrap(args):
     require(current.is_symlink() and current.resolve() == BASE / 'releases' / expected[:16], 'The active application differs from the reviewed release.')
     receipt_path = BASE / 'private/updates' / expected[:16] / 'receipt.json'
     require(json.loads(receipt_path.read_text())['release'] == expected, 'The installed receipt does not match.')
-    for target in [OPS, CI_HOME, SUDOERS, BASE / 'private/ci', BASE / 'private/ci-bootstrap.json']:
+    forbidden = [CI_HOME, SUDOERS, BASE / 'private/ci-bootstrap.json']
+    if recovery is None:
+        forbidden += [OPS, BASE / 'private/ci']
+    else:
+        require(recovery['failedSha256'] == sha256(BASE / 'private/ci-bootstrap-failed.json'), 'The failed bootstrap changed after recovery validation.')
+        for name in ['ci_deploy.py', 'install_vps.py', 'update_vps.py']:
+            require(sha256(OPS / name) == manifest['files'][name], 'Recovery helpers do not match the reviewed replacement.')
+    for target in forbidden:
         require(not target.exists() and not target.is_symlink(), 'CI resources already exist; do not repeat bootstrap.')
     try:
         pwd.getpwnam('tomasini-ci')
@@ -107,15 +130,18 @@ def bootstrap(args):
     else:
         ops_parent.mkdir(mode=0o755)
         os.chmod(ops_parent, 0o755)
-    OPS.mkdir(mode=0o755)
-    os.chmod(OPS, 0o755)
+    if recovery is None:
+        OPS.mkdir(mode=0o755)
+        os.chmod(OPS, 0o755)
     access_files = {}
+    probe_directory = None
     try:
-        for name in ['ci_deploy.py', 'install_vps.py', 'update_vps.py']:
-            root_file(OPS / name, (source / name).read_bytes(), 0o644)
-            require(sha256(OPS / name) == manifest['files'][name], 'Operational copy hash mismatch.')
-        root_file(OPS / 'deploy-root', '#!/bin/sh\n[ "$#" -eq 0 ] || exit 64\nexec /usr/bin/python3 -I /opt/tomasini/ops/ci/ci_deploy.py root\n', 0o755)
-        (BASE / 'private/ci').mkdir(mode=0o700)
+        if recovery is None:
+            for name in ['ci_deploy.py', 'install_vps.py', 'update_vps.py']:
+                root_file(OPS / name, (source / name).read_bytes(), 0o644)
+                require(sha256(OPS / name) == manifest['files'][name], 'Operational copy hash mismatch.')
+            root_file(OPS / 'deploy-root', '#!/bin/sh\n[ "$#" -eq 0 ] || exit 64\nexec /usr/bin/python3 -I /opt/tomasini/ops/ci/ci_deploy.py root\n', 0o755)
+            (BASE / 'private/ci').mkdir(mode=0o700)
         # Exercise the complete Linux preparation path before granting unattended access.
         sys.path.insert(0, str(OPS))
         import ci_deploy as ci
@@ -163,13 +189,14 @@ def bootstrap(args):
                    'verification': {'existingApplicationsPreserved': True, 'applicationNotRestarted': True, 'fullBuildProbePassed': True, 'schemaPolicy': 'identical-to-active-only'}}
         root_file(BASE / 'private/ci-bootstrap.json', json.dumps(receipt, indent=2))
         public_receipt = source / 'ci-public-receipt.json'
-        require(source.parent == Path('/home/mozzi') and source.name.startswith('tomasini-ci-bootstrap-'), 'Unexpected public receipt destination.')
+        require(source.parent == Path('/home/mozzi') and re.fullmatch(r'tomasini-ci-(?:bootstrap|repair)-[a-f0-9]{16}', source.name), 'Unexpected public receipt destination.')
         root_file(public_receipt, json.dumps(receipt, indent=2))
         os.chown(public_receipt, pwd.getpwnam('mozzi').pw_uid, pwd.getpwnam('mozzi').pw_gid)
+        export_diagnostic(source, probe_directory)
         # Only the public receipt is returned; no credential is generated or exported by the VPS.
         print(json.dumps(receipt), flush=True)
         return 0
-    except Exception:
+    except Exception as error:
         cleanup_issues = []
         for path, identity in reversed(list(access_files.items())):
             try:
@@ -184,6 +211,10 @@ def bootstrap(args):
                       'keyDisabled': not (key_path.exists() or key_path.is_symlink()), 'sudoRuleRemoved': not (SUDOERS.exists() or SUDOERS.is_symlink()), 'cleanupIssues': cleanup_issues}))
         except Exception:
             pass
+        try:
+            export_diagnostic(source, probe_directory, error)
+        except Exception:
+            pass
         raise
 
 
@@ -194,6 +225,12 @@ def main():
     try:
         return bootstrap(args)
     except Exception as error:
+        try:
+            source = Path(__file__).resolve().parent
+            if not (source / 'ci-build-diagnostic.json').exists():
+                export_diagnostic(source, None, error)
+        except Exception:
+            pass
         print(json.dumps({'status': 'failed', 'error': type(error).__name__, 'message': str(error)}), file=sys.stderr, flush=True)
         return 1
 

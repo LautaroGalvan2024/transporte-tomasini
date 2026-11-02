@@ -216,7 +216,9 @@ def build_arguments(source, identifier, probe=False):
         f'BindPaths=/var/lib/private/{state}/.ci-tmp:/tmp /var/lib/private/{state}/.ci-var-tmp:/var/tmp',
         f'BindReadOnlyPaths={source}:/input {BASE}/runtime:/runtime',
         'InaccessiblePaths=-/run/postgresql -/run/redis -/etc/postgresql -/etc/ssh',
-        'IPAddressDeny=localhost 72.60.50.213/32 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16',
+        # systemd-run's D-Bus property parser accepts one prefix per assignment.
+        'IPAddressDeny=127.0.0.0/8', 'IPAddressDeny=::1/128', 'IPAddressDeny=72.60.50.213/32',
+        'IPAddressDeny=10.0.0.0/8', 'IPAddressDeny=172.16.0.0/12', 'IPAddressDeny=192.168.0.0/16',
         'IPAddressAllow=127.0.0.53/32',
         'Environment=NODE_ENV=production PATH=/runtime/bin:/usr/bin:/bin HOME=/tmp npm_config_cache=/tmp/npm-cache XDG_CACHE_HOME=/tmp/cache',
     ]

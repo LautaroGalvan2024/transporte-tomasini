@@ -18,6 +18,8 @@ Las contraseñas de app/migrador se generan en cada ejecución, se enmascaran y 
 
 CI no utiliza ni se conecta a bases, SMTP o servicios de producción. No ejecuta `db push`, reset ni semillas. No sube `.env`, `.local`, bases, contraseñas o `node_modules` como artefactos.
 
+Además, únicamente `CI` ensaya el sandbox real de despliegue en el runner efímero Ubuntu 24.04/systemd 255. `infra/ci_sandbox_smoke.py` exige un runner Linux alojado por GitHub, rechaza cualquier `/opt/tomasini` existente y crea una instalación ficticia con los archivos permitidos del release. Ejecuta el mismo `build_isolated(probe=True)` que el bootstrap: usuario dinámico, imagen ext4 limitada, temporales dentro de esa imagen, runtime de solo lectura, `npm ci` y generación Prisma. Comprueba los artefactos y el esquema y elimina solo los recursos propios. No recibe secretos ni habilita SSH, instala servicios persistentes o publica la aplicación. El workflow de producción no repite este ensayo adicional. Las guardas usan las [variables oficiales de GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/variables).
+
 ## Configuración inicial de GitHub
 
 En **Settings → Environments → production**, permitir despliegues únicamente desde la rama `main`. Para publicación automática no configurar aprobación humana obligatoria, salvo que se quiera cambiar deliberadamente ese comportamiento.
