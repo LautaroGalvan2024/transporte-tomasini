@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.woff2 binary
+# Applied migration bytes are immutable, including their original line endings.
+backend/prisma/migrations/**/migration.sql -text whitespace=cr-at-eol,-blank-at-eof

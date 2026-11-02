@@ -1,0 +1,189 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas = ["tomasini"]
+}
+
+enum Role {
+  ADMIN
+  DRIVER
+  @@schema("tomasini")
+}
+enum TripStatus {
+  ACTIVE
+  CANCELLED
+  @@schema("tomasini")
+}
+enum ObligationKind {
+  SERVICE
+  DOCUMENT
+  @@schema("tomasini")
+}
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  username           String    @unique @db.VarChar(64)
+  name               String    @db.VarChar(120)
+  passwordHash       String
+  role               Role
+  active             Boolean   @default(true)
+  mustChangePassword Boolean   @default(true)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
+  driver             Driver?
+  sessions           Session[]
+  audits             Audit[]
+  @@schema("tomasini")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique @db.Char(64)
+  userId    String   @db.Uuid
+  expiresAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+  @@schema("tomasini")
+}
+
+model Driver {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String       @unique @db.Uuid
+  phone           String?      @db.VarChar(40)
+  assignedTruckId String?      @db.Uuid
+  user            User         @relation(fields: [userId], references: [id])
+  assignedTruck   Truck?       @relation(fields: [assignedTruckId], references: [id])
+  trips           Trip[]
+  obligations     Obligation[]
+  @@schema("tomasini")
+}
+
+model Truck {
+  id                String       @id @default(uuid()) @db.Uuid
+  plate             String       @unique @db.VarChar(16)
+  label             String       @db.VarChar(120)
+  active            Boolean      @default(true)
+  initialOdometer   Int
+  initialOdometerAt DateTime     @db.Timestamptz(3)
+  createdAt         DateTime     @default(now()) @db.Timestamptz(3)
+  assignedDrivers   Driver[]
+  trips             Trip[]
+  obligations       Obligation[]
+  @@schema("tomasini")
+}
+
+model Trip {
+  id              String     @id @default(uuid()) @db.Uuid
+  clientRequestId String     @unique @db.Uuid
+  requestHash     String     @db.Char(64)
+  createdById     String     @db.Uuid
+  driverId        String     @db.Uuid
+  truckId         String     @db.Uuid
+  origin          String     @db.VarChar(180)
+  destination     String     @db.VarChar(180)
+  departureAt     DateTime   @db.Timestamptz(3)
+  arrivalAt       DateTime   @db.Timestamptz(3)
+  startKm         Int
+  endKm           Int
+  allowance       Decimal?   @db.Decimal(14, 2)
+  notes           String?    @db.VarChar(2000)
+  status          TripStatus @default(ACTIVE)
+  reviewedAt      DateTime?  @db.Timestamptz(3)
+  reviewedById    String?    @db.Uuid
+  cancelledAt     DateTime?  @db.Timestamptz(3)
+  cancelledById   String?    @db.Uuid
+  cancellationReason String? @db.VarChar(500)
+  version         Int        @default(1)
+  createdAt       DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime   @updatedAt @db.Timestamptz(3)
+  driver          Driver     @relation(fields: [driverId], references: [id])
+  truck           Truck      @relation(fields: [truckId], references: [id])
+  @@index([truckId, arrivalAt])
+  @@index([driverId, departureAt])
+  @@index([status, departureAt])
+  @@schema("tomasini")
+}
+
+model Obligation {
+  id             String         @id @default(uuid()) @db.Uuid
+  title          String         @db.VarChar(180)
+  kind           ObligationKind
+  truckId        String?        @db.Uuid
+  driverId       String?        @db.Uuid
+  dueDate        DateTime?      @db.Date
+  dueKm          Int?
+  intervalMonths Int?
+  intervalKm     Int?
+  warningDays    Int             @default(30)
+  warningKm      Int             @default(1000)
+  notes          String?        @db.VarChar(2000)
+  active         Boolean        @default(true)
+  version        Int            @default(1)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  truck          Truck?         @relation(fields: [truckId], references: [id])
+  driver         Driver?        @relation(fields: [driverId], references: [id])
+  renewals       Renewal[]
+  @@index([truckId, active])
+  @@index([driverId, active])
+  @@schema("tomasini")
+}
+
+model Renewal {
+  id          String     @id @default(uuid()) @db.Uuid
+  obligationId String    @db.Uuid
+  performedAt DateTime   @db.Timestamptz(3)
+  odometer    Int?
+  nextDueDate DateTime?  @db.Date
+  nextDueKm   Int?
+  notes       String?    @db.VarChar(2000)
+  createdById String     @db.Uuid
+  createdAt   DateTime   @default(now()) @db.Timestamptz(3)
+  obligation  Obligation @relation(fields: [obligationId], references: [id])
+  @@index([obligationId, performedAt])
+  @@schema("tomasini")
+}
+
+model Audit {
+  id         String   @id @default(uuid()) @db.Uuid
+  entity     String   @db.VarChar(40)
+  entityId   String   @db.Uuid
+  action     String   @db.VarChar(40)
+  actorId    String   @db.Uuid
+  before     Json?
+  after      Json?
+  reason     String?  @db.VarChar(500)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  actor      User     @relation(fields: [actorId], references: [id])
+  @@index([entity, entityId, createdAt])
+  @@schema("tomasini")
+}
+
+model Setting {
+  id             String  @id @default("main")
+  recipientEmail String? @db.VarChar(254)
+  warningDays    Int     @default(30)
+  warningKm      Int     @default(1000)
+  @@schema("tomasini")
+}
+
+model Notification {
+  id          String    @id @default(uuid()) @db.Uuid
+  date        DateTime  @db.Date
+  recipient   String    @db.VarChar(254)
+  status      String    @default("PENDING") @db.VarChar(16)
+  payload     Json
+  error       String?   @db.VarChar(500)
+  sentAt      DateTime? @db.Timestamptz(3)
+  attempts    Int       @default(0)
+  nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+  leaseUntil  DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  @@unique([date, recipient])
+  @@index([status, nextAttemptAt])
+  @@schema("tomasini")
+}
