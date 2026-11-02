@@ -113,7 +113,7 @@ Una única autenticación sudo cubre actualización y entrega. Se descargan reci
 ```powershell
 node --test scripts/test-infra.mjs
 node --test scripts/test-migrations.mjs
-& 'C:\Users\Nico\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m unittest discover -s infra -p test_install_vps.py -v
+& 'C:\Users\Nico\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m unittest discover -s infra -p '*vps.py' -v
 node scripts/db.mjs check
 node scripts/db.mjs backup-restore-check
 ```

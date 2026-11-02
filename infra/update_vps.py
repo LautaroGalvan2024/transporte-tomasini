@@ -137,6 +137,7 @@ def verify_preserved(snapshot):
     core.verify_existing(snapshot)
     core.require(core.sha256(APP_ENV) == snapshot['apiEnvSha256'], 'La configuración privada cambió durante la actualización; no sobrescribirla.')
     core.require(core.sha256(core.HBA) == snapshot['hbaSha256'] and core.sha256(core.UNIT) == snapshot['serviceSha256'], 'Cambió una configuración que esta actualización no debe modificar.')
+    core.require(core.sql("SELECT NOT rolcanlogin AND rolpassword IS NULL FROM pg_authid WHERE rolname='tomasini_prod_migrator';") == 't', 'El migrador debe quedar sin LOGIN ni contraseña.')
     current_counts = counts()
     core.require(all(current_counts[key] >= value for key, value in snapshot['counts'].items()), 'Disminuyó una cantidad de registros existentes; requiere revisión.')
 
@@ -301,7 +302,7 @@ def update(args):
         core.write_new(directory / 'postflight.json', json.dumps(postflight, indent=2))
         receipt = {'kind': 'update', 'release': args.release_sha, 'previousRelease': plan['previousReleaseSha256'],
                    'database': DATABASE, 'host': core.HOST, 'timestamp': time.time(), 'migrations': plan['pendingMigrations'],
-                   'verification': {'existingApplicationsPreserved': True, 'apiEnvironmentPreserved': True, 'publicReadiness': 200,
+                   'verification': {'existingApplicationsPreserved': True, 'apiEnvironmentPreserved': True, 'migrationRoleLocked': True, 'publicReadiness': 200,
                                     'backupBeforeMigrationValidated': True, 'beforeSha256': core.sha256(directory / 'preflight.json'),
                                     'afterSha256': core.sha256(directory / 'postflight.json')}}
         core.write_new(directory / 'receipt.json', json.dumps(receipt, indent=2))

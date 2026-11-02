@@ -63,7 +63,7 @@ exit $?
     if ($LASTEXITCODE -ne 0) { throw 'Actualización completada; una descarga privada quedó pendiente.' }
   }
   $receipt = Get-Content -LiteralPath (Join-Path $directory 'installed.json') -Raw | ConvertFrom-Json
-  if ($receipt.kind -ne 'update' -or $receipt.release -ne $manifest.sha256 -or $receipt.previousRelease -ne $manifest.previousReleaseSha256 -or -not $receipt.verification.existingApplicationsPreserved -or -not $receipt.verification.apiEnvironmentPreserved) { throw 'El recibo no confirma la actualización y conservación esperadas.' }
+  if ($receipt.kind -ne 'update' -or $receipt.release -ne $manifest.sha256 -or $receipt.previousRelease -ne $manifest.previousReleaseSha256 -or -not $receipt.verification.existingApplicationsPreserved -or -not $receipt.verification.apiEnvironmentPreserved -or -not $receipt.verification.migrationRoleLocked) { throw 'El recibo no confirma la actualización y conservación esperadas.' }
   $backup = Get-Content -LiteralPath (Join-Path $directory 'backup-manifest.json') -Raw | ConvertFrom-Json
   if ($backup.database -ne 'tomasini_prod' -or $backup.purpose -ne 'before-additive-update') { throw 'El respaldo no corresponde al estado previo a esta actualización.' }
   foreach ($pair in @(@('preflight.json',$receipt.verification.beforeSha256),@('postflight.json',$receipt.verification.afterSha256),@('tomasini_prod.dump',$backup.sha256))) {

@@ -29,6 +29,12 @@ if (
   metadata.sha256 !== dumpHash
 )
   throw new Error("Recibo o respaldo inválido; no se restaura.");
+if (
+  receipt.kind === "update" &&
+  (metadata.purpose !== "before-additive-update" ||
+    !/^[a-f0-9]{64}$/.test(receipt.previousRelease))
+)
+  throw new Error("El respaldo no acredita el estado anterior a la actualización.");
 const marker = json(join(root, ".local", "postgres-owner.json"));
 if (
   marker.project !== root ||
@@ -147,6 +153,9 @@ try {
   report = {
     status: "restored_and_verified",
     sourceDatabase: "tomasini_prod",
+    backupPurpose: metadata.purpose || "initial-deployment",
+    deployedRelease: receipt.release,
+    backupRelease: receipt.kind === "update" ? receipt.previousRelease : receipt.release,
     sha256: dumpHash,
     verifiedAt: new Date().toISOString(),
     target: "local isolated PostgreSQL 55440",
