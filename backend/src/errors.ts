@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler } from "express";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
+import { isRetryableTransactionError } from "./db.js";
 
 export class AppError extends Error {
   constructor(
@@ -27,72 +28,60 @@ export const errorHandler: ErrorRequestHandler = (
   _next,
 ) => {
   if (err instanceof AppError) {
-    res
-      .status(err.status)
-      .json({
-        error: {
-          message: err.message,
-          code: err.code,
-          ...(err.fields ? { fields: err.fields } : {}),
-        },
-      });
+    res.status(err.status).json({
+      error: {
+        message: err.message,
+        code: err.code,
+        ...(err.fields ? { fields: err.fields } : {}),
+      },
+    });
     return;
   }
   if (err instanceof ZodError) {
     const fields = Object.fromEntries(
       err.issues.map((i) => [i.path.join("."), i.message]),
     );
-    res
-      .status(400)
-      .json({
-        error: {
-          message: "Revisá los campos indicados.",
-          code: "VALIDATION",
-          fields,
-        },
-      });
+    res.status(400).json({
+      error: {
+        message: "Revisá los campos indicados.",
+        code: "VALIDATION",
+        fields,
+      },
+    });
     return;
   }
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === "P2002") {
-      res
-        .status(409)
-        .json({
-          error: {
-            message: "Ya existe un registro con esos datos.",
-            code: "DUPLICATE",
-          },
-        });
+      res.status(409).json({
+        error: {
+          message: "Ya existe un registro con esos datos.",
+          code: "DUPLICATE",
+        },
+      });
       return;
     }
     if (err.code === "P2025") {
-      res
-        .status(404)
-        .json({
-          error: { message: "No se encontró el registro.", code: "NOT_FOUND" },
-        });
+      res.status(404).json({
+        error: { message: "No se encontró el registro.", code: "NOT_FOUND" },
+      });
       return;
     }
-    if (err.code === "P2034") {
-      res
-        .status(409)
-        .json({
-          error: {
-            message: "Otro usuario modificó estos datos. Volvé a intentar.",
-            code: "CONFLICT",
-          },
-        });
+    if (isRetryableTransactionError(err)) {
+      res.status(409).json({
+        error: {
+          message: "Otro usuario modificó estos datos. Volvé a intentar.",
+          code: "CONFLICT",
+        },
+      });
       return;
     }
     if (err.code === "P2003") {
-      res
-        .status(400)
-        .json({
-          error: {
-            message: "La referencia indicada no existe.",
-            code: "INVALID_REFERENCE",
-          },
-        });
+      res.status(400).json({
+        error: {
+          message: "La referencia indicada no existe.",
+          code: "INVALID_REFERENCE",
+        },
+      });
       return;
     }
   }
@@ -102,14 +91,12 @@ export const errorHandler: ErrorRequestHandler = (
     "type" in err &&
     ["entity.too.large", "entity.parse.failed"].includes(String(err.type))
   ) {
-    res
-      .status(400)
-      .json({
-        error: {
-          message: "Solicitud inválida o demasiado grande.",
-          code: "INVALID_BODY",
-        },
-      });
+    res.status(400).json({
+      error: {
+        message: "Solicitud inválida o demasiado grande.",
+        code: "INVALID_BODY",
+      },
+    });
     return;
   }
   console.error(
@@ -120,12 +107,10 @@ export const errorHandler: ErrorRequestHandler = (
         ? err.name
         : "Error",
   );
-  res
-    .status(500)
-    .json({
-      error: {
-        message: "No pudimos completar la operación. Intentá nuevamente.",
-        code: "INTERNAL",
-      },
-    });
+  res.status(500).json({
+    error: {
+      message: "No pudimos completar la operación. Intentá nuevamente.",
+      code: "INTERNAL",
+    },
+  });
 };

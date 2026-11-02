@@ -17,6 +17,7 @@ import { obligationsRouter } from "./obligations.js";
 import { dashboardRouter } from "./dashboard.js";
 import { errorHandler } from "./errors.js";
 import { invitationsRouter, publicInvitationsRouter } from "./invitations.js";
+import { usersRouter } from "./users.js";
 
 export function createApp() {
   const cfg = getConfig(),
@@ -65,6 +66,7 @@ export function createApp() {
   app.use("/api/invitations", publicInvitationsRouter());
   app.use("/api", authenticate, requireChangedPassword);
   app.use("/api/invitations", invitationsRouter());
+  app.use("/api/users", usersRouter());
   app.use("/api/trucks", trucksRouter());
   app.use("/api/drivers", driversRouter());
   app.use("/api/trips", tripsRouter());

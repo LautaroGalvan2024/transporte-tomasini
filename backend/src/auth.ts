@@ -2,7 +2,8 @@ import { Router, type RequestHandler, type Request } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { User, Driver } from "@prisma/client";
-import { getDb } from "./db.js";
+import { getDb, transaction } from "./db.js";
+import { lockAccessChanges } from "./access-control.js";
 import { getConfig } from "./config.js";
 import { AppError, ensure } from "./errors.js";
 import { hashPassword, verifyPassword } from "./password.js";
@@ -130,8 +131,25 @@ export function authRouter() {
     const token = randomBytes(32).toString("hex");
     const cfg = getConfig();
     const expiresAt = new Date(Date.now() + cfg.sessionDays * 86_400_000);
-    await getDb().session.create({
-      data: { userId: user.id, tokenHash: digest(token), expiresAt },
+    const authenticated = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await tx.$queryRaw`SELECT id FROM tomasini."User" WHERE id = ${user.id}::uuid FOR UPDATE`;
+      const latest = await tx.user.findUnique({
+        where: { id: user.id },
+        include: { driver: true },
+      });
+      ensure(
+        latest?.active &&
+          latest.passwordHash === user.passwordHash &&
+          latest.username === input.username,
+        401,
+        "Usuario o contraseña incorrectos.",
+        "INVALID_CREDENTIALS",
+      );
+      await tx.session.create({
+        data: { userId: latest.id, tokenHash: digest(token), expiresAt },
+      });
+      return latest;
     });
     res.cookie(cfg.cookieName, token, {
       httpOnly: true,
@@ -140,7 +158,7 @@ export function authRouter() {
       expires: expiresAt,
       path: "/",
     });
-    res.json(userDto(user));
+    res.json(userDto(authenticated));
   });
   router.use(authenticate);
   router.get("/me", (req, res) => res.json(userDto(currentUser(req))));
@@ -174,15 +192,30 @@ export function authRouter() {
       "Elegí una contraseña diferente a la actual.",
     );
     const passwordHash = await hashPassword(input.newPassword);
-    await getDb().$transaction([
-      getDb().user.update({
-        where: { id: user.id, passwordHash: user.passwordHash },
+    await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await tx.$queryRaw`SELECT id FROM tomasini."User" WHERE id = ${user.id}::uuid FOR UPDATE`;
+      const latest = await tx.user.findUnique({ where: { id: user.id } });
+      const session = await tx.session.findUnique({
+        where: { id: req.sessionId },
+      });
+      ensure(
+        latest?.active &&
+          latest.passwordHash === user.passwordHash &&
+          session?.userId === user.id &&
+          session.expiresAt > new Date(),
+        401,
+        "Tu acceso cambió. Volvé a ingresar.",
+        "UNAUTHENTICATED",
+      );
+      await tx.user.update({
+        where: { id: user.id },
         data: { passwordHash, mustChangePassword: false },
-      }),
-      getDb().session.deleteMany({
+      });
+      await tx.session.deleteMany({
         where: { userId: user.id, id: { not: req.sessionId } },
-      }),
-    ]);
+      });
+    });
     res.sendStatus(204);
   });
   return router;

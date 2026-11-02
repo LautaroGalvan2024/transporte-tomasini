@@ -38,7 +38,7 @@ export function dashboardRouter() {
         truckDtos(),
         driverDtos(user),
       ]);
-    const obligations = allObligations.filter((o) => o.active);
+    const obligations = allObligations.filter((o) => o.active && o.ownerActive);
     const currentDriver = user.role === "DRIVER" ? (drivers[0] ?? null) : null;
     res.json({
       stats: {

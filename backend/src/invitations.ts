@@ -8,6 +8,7 @@ import { ensure, AppError } from "./errors.js";
 import { audit } from "./models.js";
 import { hashPassword } from "./password.js";
 import { uuid } from "./validation.js";
+import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
 import {
   invitationAccept,
   invitationCreate,
@@ -96,6 +97,40 @@ export async function revokeDriverInvitations(
   }
 }
 
+export async function revokeIssuedInvitations(
+  tx: Tx,
+  creatorId: string,
+  actorId: string,
+  reason: string,
+) {
+  const pending = await tx.invitation.findMany({
+    where: {
+      createdById: creatorId,
+      acceptedAt: null,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    include: invitationInclude,
+  });
+  for (const old of pending) {
+    const row = await tx.invitation.update({
+      where: { id: old.id },
+      data: { revokedAt: new Date(), revokedById: actorId },
+      include: invitationInclude,
+    });
+    await audit(
+      tx,
+      actorId,
+      "INVITATION",
+      row.id,
+      "REVOKED",
+      invitationDto(old),
+      invitationDto(row),
+      reason,
+    );
+  }
+}
+
 export function publicInvitationsRouter() {
   const router = Router();
   router.post("/preview", async (req, res) => {
@@ -127,6 +162,7 @@ export function publicInvitationsRouter() {
     const passwordHash = await hashPassword(input.password);
     try {
       const role = await transaction(async (tx) => {
+        await lockAccessChanges(tx);
         // Same lock order as invitation replacement and driver management.
         if (initial.driverId)
           await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${initial.driverId}::uuid FOR UPDATE`;
@@ -249,6 +285,8 @@ export function invitationsRouter() {
       actor = currentUser(req);
     const token = randomBytes(32).toString("base64url");
     const invitation = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, actor.id, req.sessionId);
       if (input.driverId) {
         await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${input.driverId}::uuid FOR UPDATE`;
         const driver = await tx.driver.findUnique({
@@ -293,18 +331,18 @@ export function invitationsRouter() {
       );
       return row;
     });
-    res
-      .status(201)
-      .json({
-        invitation: invitationDto(invitation),
-        token,
-        joinUrl: `${getConfig().origin}/join#${token}`,
-      });
+    res.status(201).json({
+      invitation: invitationDto(invitation),
+      token,
+      joinUrl: `${getConfig().origin}/join#${token}`,
+    });
   });
   router.post("/:id/revoke", async (req, res) => {
     const id = uuid.parse(req.params.id),
       actor = currentUser(req);
     const row = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, actor.id, req.sessionId);
       await tx.$queryRaw`SELECT id FROM tomasini."Invitation" WHERE id = ${id}::uuid FOR UPDATE`;
       const old = await tx.invitation.findUnique({
         where: { id },

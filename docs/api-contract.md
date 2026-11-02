@@ -34,3 +34,32 @@ Solo invitaciones DRIVER permiten `driverId`. Vincular un chofer activo existent
 Los tokens son aleatorios de 256 bits, se persiste únicamente SHA-256 y se consumen una sola vez dentro de una transacción. Token desconocido devuelve 404; usado, vencido o revocado devuelve 410, ambos con código `INVITATION_UNAVAILABLE`. Usuario ocupado devuelve 409 `USERNAME_TAKEN` sin consumir la invitación.
 
 Frontend usa enum ADMIN/DRIVER, SERVICE/DOCUMENT, OVERDUE/UPCOMING/OK/UNCONFIGURED, ACTIVE/CANCELLED. Dinero ARS nullable decimal, exportado numéricamente. Listados sin paginación de flota/devueltos completos por tamaño acotado. Las restricciones y permisos SIEMPRE backend.
+
+## Usuarios, roles y bajas lógicas
+
+Todos requieren administración autenticada con contraseña definitiva y protección de origen en las mutaciones.
+
+- GET /api/users => `{items:UserAccess[]}`. Incluye administradores sin perfil de chofer y cuentas activas/inactivas.
+- PATCH /api/users/:id `{role?:'ADMIN'|'DRIVER',active?:boolean}` => `UserAccess`. Debe incluir al menos un campo; no acepta contraseñas, identificadores de chofer ni otros atributos.
+- DELETE /api/users/:id => `UserAccess` con `active:false`. Es una baja lógica idempotente: conserva usuario, perfil, viajes, documentación y auditorías.
+
+`UserAccess` contiene `{id,username,name,role,active,mustChangePassword,driverId:string|null,createdAt,updatedAt}`. No devuelve contraseñas, hashes ni tokens. Las fechas son instantes ISO del servidor.
+
+La propia baja o democión devuelve 409 `SELF_ACCESS_CHANGE`; quitar al último administrador activo devuelve 409 `LAST_ADMIN`. Las mutaciones revalidan actor/sesión dentro de una transacción y coordinan cambios de cuentas, credenciales e invitaciones. Un acceso revocado durante la operación devuelve 401/403, sin completar el cambio.
+
+Todo cambio efectivo de rol o estado revoca sesiones y enlaces pendientes vinculados a ese chofer. Una baja o pérdida del rol ADMIN también revoca invitaciones pendientes emitidas por esa cuenta. La reactivación requiere volver a ingresar y no restaura sesiones ni enlaces previos. Cambiar a DRIVER crea el perfil si faltaba; cambiar a ADMIN o desactivar desasigna el camión actual y preserva el perfil e historial. Volver a DRIVER reutiliza ese mismo perfil.
+
+`Driver` añade `role` y `accountActive`. Su campo `active` indica disponibilidad operativa: cuenta activa **y** rol DRIVER. Los perfiles históricos que ahora pertenecen a administradores permanecen visibles; no se admiten en viajes nuevos ni se modifican/restablecen por los endpoints antiguos de choferes (409 `DRIVER_ROLE_REQUIRED`). Corregir viajes existentes sin cambiar el chofer sigue permitido según los permisos habituales.
+
+Los cambios quedan auditados como entidad USER (`ROLE_CHANGED`, `DEACTIVATED`, `REACTIVATED`), con actor, fecha del servidor y valores anteriores/posteriores seguros, incluida la asignación retirada. Una baja repetida no duplica la auditoría.
+
+## Baja de camiones y correcciones de odómetro
+
+- DELETE /api/trucks/:id => `Truck` con `active:false`. Baja lógica idempotente, exclusiva de administración: conserva viajes/servicios y desasigna choferes en la misma transacción, auditando ambas operaciones. PATCH con `active:true` reactiva la unidad, sin recuperar asignaciones anteriores.
+- PATCH /api/trucks/:id/odometer `{odometer:number,expectedOdometer:number,expectedOdometerAt:ISO}` => `Truck`. Admite subir o bajar la lectura de un camión activo, entre 0 y 9.999.999 km enteros. Un formulario desactualizado devuelve 409 `ODOMETER_VERSION_CONFLICT`; no sobrescribe la otra corrección. Usuario y fecha se obtienen del servidor, nunca del formulario.
+
+Cada corrección efectiva genera un evento permanente Audit de entidad TRUCK y acción `ODOMETER_ADJUSTED`, con actor, fecha y `before/after:{version:1,odometer,odometerAt}`. Esos eventos son parte del historial de lecturas: **no deben purgarse como logs**. No se cambia el odómetro inicial ni se reescriben viajes o servicios existentes. La lectura actual se calcula por fecha entre viajes activos, servicios y ajustes; cancelar un viaje posterior vuelve a la lectura válida anterior.
+
+Un ajuste inicia un nuevo tramo de kilometraje, permitiendo corregir hacia abajo sin invalidar el historial previo. Cada tramo mantiene sus validaciones de coherencia. Los viajes atrasados se validan en su tramo y no reemplazan una lectura posterior. Un viaje que atraviese una corrección devuelve 409 `ODOMETER_ADJUSTMENT_BOUNDARY`: debe corregirse la fecha o dividir el recorrido. Los límites de servicio no se desplazan; su estado se recalcula con la nueva lectura. Esto representa una corrección de datos, no un reemplazo físico del medidor ni un ajuste retroactivo.
+
+`Obligation.ownerActive` indica si el camión está activo o el chofer mantiene una cuenta activa con rol DRIVER. Los vencimientos de dueños inactivos siguen disponibles como historial administrativo, pero quedan fuera del tablero operativo y del correo; no admiten renovaciones hasta reactivar al dueño. Su configuración se conserva para la reactivación.

@@ -258,6 +258,7 @@ export function obligationsRouter() {
       }
       if (old.truckId) {
         await lockTrucks(tx, [old.truckId]);
+        await activeTruck(tx, old.truckId);
         if (input.odometer != null)
           await validateTruckHistory(tx, old.truckId, undefined, undefined, {
             at: performedAt,
@@ -265,6 +266,7 @@ export function obligationsRouter() {
             label: old.title,
           });
       }
+      if (old.driverId) await activeDriver(tx, old.driverId);
       const renewal = await tx.renewal.create({
         data: {
           obligationId: id,
