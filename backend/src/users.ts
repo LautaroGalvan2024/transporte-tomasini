@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { currentUser, requireAdmin, userDto, type AuthUser } from "./auth.js";
-import { getDb, transaction } from "./db.js";
+import { getDb, lockTrucks, transaction } from "./db.js";
 import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
 import { ensure } from "./errors.js";
 import { uuid } from "./validation.js";
-import { audit } from "./models.js";
+import { activeTruck, audit } from "./models.js";
 import {
   revokeDriverInvitations,
   revokeIssuedInvitations,
@@ -20,10 +20,12 @@ const userUpdate = z
   .refine((input) => input.role !== undefined || input.active !== undefined, {
     message: "Indicá el rol o estado que querés cambiar.",
   });
+const truckAssignment = z.object({ assignedTruckId: uuid.nullable() }).strict();
 
 function accessDto(user: AuthUser) {
   return {
     ...userDto(user),
+    assignedTruckId: user.driver?.assignedTruckId ?? null,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
   };
@@ -38,6 +40,60 @@ export function usersRouter() {
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
     res.json({ items: rows.map(accessDto) });
+  });
+  router.patch("/:id/truck", async (req, res) => {
+    const id = uuid.parse(req.params.id);
+    const input = truckAssignment.parse(req.body);
+    const actor = currentUser(req);
+    const row = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, actor.id, req.sessionId);
+      const old = await tx.user.findUnique({
+        where: { id },
+        include: { driver: true },
+      });
+      ensure(old, 404, "No se encontró el usuario.", "NOT_FOUND");
+      ensure(
+        old.active,
+        409,
+        "Reactivá al usuario antes de asignar su camión.",
+        "USER_INACTIVE",
+      );
+      if (input.assignedTruckId) {
+        await lockTrucks(tx, [input.assignedTruckId]);
+        await activeTruck(tx, input.assignedTruckId);
+      }
+      if (old.driver)
+        await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${old.driver.id}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM tomasini."User" WHERE id = ${id}::uuid FOR UPDATE`;
+      if ((old.driver?.assignedTruckId ?? null) === input.assignedTruckId)
+        return old;
+      const driver = old.driver
+        ? await tx.driver.update({
+            where: { id: old.driver.id },
+            data: { assignedTruckId: input.assignedTruckId },
+          })
+        : await tx.driver.create({
+            data: { userId: id, assignedTruckId: input.assignedTruckId },
+          });
+      await audit(
+        tx,
+        actor.id,
+        "USER",
+        id,
+        input.assignedTruckId ? "TRUCK_ASSIGNED" : "TRUCK_UNASSIGNED",
+        {
+          driverId: old.driver?.id ?? null,
+          assignedTruckId: old.driver?.assignedTruckId ?? null,
+        },
+        { driverId: driver.id, assignedTruckId: driver.assignedTruckId },
+      );
+      return tx.user.findUniqueOrThrow({
+        where: { id },
+        include: { driver: true },
+      });
+    });
+    res.json(accessDto(row));
   });
   const change =
     (deactivate: boolean) =>
@@ -82,7 +138,7 @@ export function usersRouter() {
         if (old.driver)
           await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${old.driver.id}::uuid FOR UPDATE`;
         await tx.$queryRaw`SELECT id FROM tomasini."User" WHERE id = ${id}::uuid FOR UPDATE`;
-        if (old.driver && (!active || role === "ADMIN")) {
+        if (old.driver && !active) {
           await tx.driver.update({
             where: { id: old.driver.id },
             data: { assignedTruckId: null },

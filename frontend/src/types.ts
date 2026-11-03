@@ -12,6 +12,7 @@ export interface UserAccess extends User {
   createdAt: string;
   updatedAt: string;
   driverId: string | null;
+  assignedTruckId: string | null;
 }
 export interface Truck {
   id: string;

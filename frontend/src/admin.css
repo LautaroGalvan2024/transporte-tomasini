@@ -1476,6 +1476,12 @@
   align-items: center;
   gap: 12px;
 }
+.admin-page .admin-team-toolbar {
+  flex-wrap: wrap;
+}
+.admin-team-toolbar .admin-user-filters {
+  display: flex;
+}
 .admin-user-filters select {
   min-height: 48px;
   width: 190px;

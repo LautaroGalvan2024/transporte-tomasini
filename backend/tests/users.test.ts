@@ -154,7 +154,7 @@ test(
         },
       );
       await t.test(
-        "promoción conserva identidad e historial, desasigna camión y cierra accesos anteriores",
+        "promoción conserva identidad, historial y camión, y cierra accesos anteriores",
         async () => {
           const invitation = await post(agentA, "/invitations", {
             role: "DRIVER",
@@ -182,8 +182,9 @@ test(
           );
           assert.equal(historical.role, "ADMIN");
           assert.equal(historical.accountActive, true);
-          assert.equal(historical.active, false);
-          assert.equal(historical.assignedTruckId, null);
+          assert.equal(historical.active, true);
+          assert.equal(historical.assignedTruckId, truck.id);
+          assert.equal(promoted.body.assignedTruckId, truck.id);
           assert.equal(
             (await patch(agentA, `/drivers/${driverId}`, { active: false }))
               .body.error.code,

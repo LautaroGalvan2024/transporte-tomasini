@@ -154,7 +154,7 @@ export function TripForm({
   useEffect(() => {
     if (tripId || initialized.current || !drivers || !trucks) return;
     const driver =
-      drivers.items.find((d) => d.id === user.driverId) ||
+      drivers.items.find((d) => d.userId === user.id && d.active) ||
       (user.role === "DRIVER" ? drivers.items[0] : null);
     setValues((v) => {
       const initial = {
@@ -413,8 +413,7 @@ export function TripForm({
                       const driver = drivers.items.find(
                         (d) => d.id === e.target.value,
                       );
-                      if (driver?.assignedTruckId)
-                        set("truckId", driver.assignedTruckId);
+                      set("truckId", driver?.assignedTruckId || "");
                     }}
                     disabled={blocked}
                   >

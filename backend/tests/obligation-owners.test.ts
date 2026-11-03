@@ -52,7 +52,7 @@ test(
       const promotedDriver = await db.user.create({
         data: {
           username: `owner_promoted_${suffix}`,
-          name: "Antiguo chofer administrador",
+          name: "Administrador con perfil operativo",
           passwordHash,
           role: "ADMIN",
           active: true,
@@ -106,7 +106,11 @@ test(
         items.find((item) => item.id === obligations[0])?.ownerActive,
         true,
       );
-      for (const id of obligations.slice(1)) {
+      assert.equal(
+        items.find((item) => item.id === obligations[3])?.ownerActive,
+        true,
+      );
+      for (const id of obligations.slice(1, 3)) {
         assert.equal(items.find((item) => item.id === id)?.ownerActive, false);
       }
       const agent = request.agent(createApp());
@@ -116,7 +120,7 @@ test(
         .set("X-Tomasini-Request", "1")
         .send({ username: admin.username, password });
       assert.equal(login.status, 200);
-      for (const id of obligations.slice(1)) {
+      for (const id of obligations.slice(1, 3)) {
         const renewal = await agent
           .post(`/api/obligations/${id}/renewals`)
           .set("Origin", getConfig().origin)
@@ -131,7 +135,7 @@ test(
         assert.equal(
           renewal.status,
           400,
-          "La API también rechaza renovaciones de un dueño inactivo o que ya no es chofer.",
+          "La API también rechaza renovaciones de un dueño inactivo.",
         );
       }
       assert.equal(
@@ -146,7 +150,11 @@ test(
         (item: { id: string }) => item.id,
       );
       assert.ok(ids.includes(obligations[0]));
-      assert.ok(obligations.slice(1).every((id) => !ids.includes(id)));
+      assert.ok(
+        ids.includes(obligations[3]),
+        "Un administrador activo con perfil conserva sus controles operativos.",
+      );
+      assert.ok(obligations.slice(1, 3).every((id) => !ids.includes(id)));
 
       await db.truck.update({
         where: { id: trucks[1] },

@@ -1135,18 +1135,15 @@ function UserRoleForm({
         </Field>
         <p className="admin-form-intro">
           {role === "ADMIN"
-            ? "Podrá administrar usuarios, camiones, viajes y vencimientos."
-            : "Podrá cargar y consultar sus viajes, con el camión que le asignes desde Equipo."}
+            ? "Podrá administrar usuarios, camiones, viajes y vencimientos, y cargar sus propios viajes."
+            : "Podrá cargar y consultar sus viajes, con el camión que le asignes."}
         </p>
         {role !== account.role && (
           <div className="admin-callout">
             <CircleAlert size={18} />
             <span>
-              Deberá volver a ingresar para usar el nuevo rol.{" "}
-              {account.role === "DRIVER"
-                ? "Su camión habitual quedará sin asignar. "
-                : ""}
-              Sus viajes e historial se conservan.
+              Deberá volver a ingresar para usar el nuevo rol. Su camión
+              habitual, viajes e historial se conservan.
               {!account.active && " El acceso seguirá desactivado."}
             </span>
           </div>
@@ -1218,8 +1215,8 @@ function UserStatusForm({
         </div>
         <p className="admin-form-intro">
           {account.active
-            ? `Se cerrará su sesión y no podrá volver a ingresar. ${account.role === "DRIVER" ? "Quedará sin camión habitual. " : ""}Sus viajes e historial seguirán guardados. Podés reactivar el acceso cuando lo necesites.`
-            : `Podrá volver a ingresar con su usuario y contraseña, con el rol indicado.${account.role === "DRIVER" ? " Asignale un camión desde Equipo cuando lo necesite." : ""}`}
+            ? "Se cerrará su sesión y no podrá volver a ingresar. Quedará sin camión habitual. Sus viajes e historial seguirán guardados. Podés reactivar el acceso cuando lo necesites."
+            : "Podrá volver a ingresar con su usuario y contraseña, con el rol indicado. Podés asignarle un camión desde Usuarios cuando lo necesite."}
         </p>
         <FormError message={form.message} />
         <div className="admin-form-footer">
@@ -1247,13 +1244,82 @@ function UserStatusForm({
   );
 }
 
+function UserTruckForm({
+  account,
+  trucks,
+  onClose,
+  onSaved,
+}: {
+  account: UserAccess;
+  trucks: Truck[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [assignedTruckId, setAssignedTruckId] = useState(
+    account.assignedTruckId || "",
+  );
+  const form = useFormStatus();
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy) return;
+    form.begin();
+    try {
+      await send(`/users/${account.id}/truck`, "PATCH", {
+        assignedTruckId: assignedTruckId || null,
+      });
+      onSaved();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  return (
+    <Modal
+      title={account.assignedTruckId ? "Cambiar camión" : "Asignar camión"}
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      <form className="admin-form" onSubmit={submit}>
+        <div className="admin-access-person">
+          <TruckIcon size={24} />
+          <div>
+            <strong>{account.name}</strong>
+            <span>{account.username}</span>
+          </div>
+        </div>
+        <Field label="Camión habitual" error={form.fields.assignedTruckId}>
+          <select
+            value={assignedTruckId}
+            onChange={(event) => setAssignedTruckId(event.target.value)}
+            disabled={form.busy}
+          >
+            <option value="">Sin camión</option>
+            {trucks
+              .filter((truck) => truck.active || truck.id === assignedTruckId)
+              .map((truck) => (
+                <option key={truck.id} value={truck.id} disabled={!truck.active}>
+                  {truck.plate} · {truck.label}
+                  {!truck.active && " (inactivo)"}
+                </option>
+              ))}
+          </select>
+        </Field>
+        <FormError message={form.message} />
+        <FormFooter busy={form.busy} onClose={onClose} />
+      </form>
+    </Modal>
+  );
+}
+
 export function UsersPage({ user, onNotify }: PageProps) {
   const accounts = useLoad<{ items: UserAccess[] }>("/users");
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
+  const trucks = useLoad<{ items: Truck[] }>("/trucks");
   const [role, setRole] = useState("all");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState("active");
   const [editing, setEditing] = useState<UserAccess | null>(null);
   const [statusAccount, setStatusAccount] = useState<UserAccess | null>(null);
+  const [truckAccount, setTruckAccount] = useState<UserAccess | null>(null);
   const [inviting, setInviting] = useState(false);
   const pageSize = usePageSize(360, 84);
   const items =
@@ -1305,14 +1371,17 @@ export function UsersPage({ user, onNotify }: PageProps) {
       </div>
       <LoadState
         loading={accounts.loading && !accounts.data}
-        error={accounts.error}
-        retry={accounts.reload}
+        error={accounts.error || trucks.error}
+        retry={() => {
+          accounts.reload();
+          trucks.reload();
+        }}
       />
       {accounts.data && !accounts.error && (
         <section className="admin-surface admin-records">
           <div className="admin-list-header admin-user-row">
             <span>Usuario</span>
-            <span>Rol</span>
+            <span>Rol y camión</span>
             <span>Acceso</span>
             <span>Acciones</span>
           </div>
@@ -1337,35 +1406,60 @@ export function UsersPage({ user, onNotify }: PageProps) {
                   </p>
                 </div>
               </div>
-              <span className="admin-row-secondary admin-user-role">
-                {account.role === "ADMIN" ? (
-                  <ShieldCheck size={17} />
-                ) : (
-                  <UserRound size={17} />
-                )}
-                {account.role === "ADMIN" ? "Administrador" : "Chofer"}
-              </span>
+              <div className="admin-row-secondary admin-row-value">
+                <span className="admin-user-role">
+                  {account.role === "ADMIN" ? (
+                    <ShieldCheck size={17} />
+                  ) : (
+                    <UserRound size={17} />
+                  )}
+                  {account.role === "ADMIN" ? "Administrador" : "Chofer"}
+                </span>
+                <small>
+                  {trucks.data?.items.find(
+                    (truck) => truck.id === account.assignedTruckId,
+                  )?.plate || "Sin camión"}
+                </small>
+              </div>
               <span
                 className={`badge ${account.active ? "success" : "neutral"}`}
               >
                 {account.active ? "Activo" : "Desactivado"}
               </span>
               <div className="admin-row-actions">
+                {account.active && (
+                  <button
+                    className="button ghost"
+                    onClick={() => setTruckAccount(account)}
+                    disabled={trucks.loading || !!trucks.error}
+                    aria-label={`${account.assignedTruckId ? "Cambiar" : "Asignar"} camión de ${account.name}`}
+                  >
+                    <TruckIcon size={17} />
+                    {account.assignedTruckId
+                      ? "Cambiar camión"
+                      : "Asignar camión"}
+                  </button>
+                )}
                 {account.id === user.id ? (
                   <span className="admin-self-account">Tu cuenta</span>
                 ) : (
                   <>
                     <button
-                      className="button ghost"
+                      className="button ghost admin-icon-button"
                       onClick={() => setEditing(account)}
+                      title="Cambiar rol"
                       aria-label={`Cambiar rol de ${account.name}`}
                     >
                       <UserRoundCog size={17} />
-                      Cambiar rol
                     </button>
                     <button
-                      className={`button ghost ${account.active ? "admin-destructive-action" : ""}`}
+                      className={`button ghost admin-icon-button ${account.active ? "admin-destructive-action" : ""}`}
                       onClick={() => setStatusAccount(account)}
+                      title={
+                        account.active
+                          ? "Desactivar usuario"
+                          : "Reactivar usuario"
+                      }
                       aria-label={`${account.active ? "Desactivar" : "Reactivar"} a ${account.name}`}
                     >
                       {account.active ? (
@@ -1373,7 +1467,6 @@ export function UsersPage({ user, onNotify }: PageProps) {
                       ) : (
                         <RotateCcw size={17} />
                       )}
-                      {account.active ? "Desactivar" : "Reactivar"}
                     </button>
                   </>
                 )}
@@ -1394,6 +1487,19 @@ export function UsersPage({ user, onNotify }: PageProps) {
           />
         </section>
       )}
+      {truckAccount && (
+        <UserTruckForm
+          account={truckAccount}
+          trucks={trucks.data?.items || []}
+          onClose={() => setTruckAccount(null)}
+          onSaved={() => {
+            setTruckAccount(null);
+            accounts.reload();
+            drivers.reload();
+            onNotify("Camión habitual actualizado");
+          }}
+        />
+      )}
       {editing && (
         <UserRoleForm
           account={editing}
@@ -1411,6 +1517,7 @@ export function UsersPage({ user, onNotify }: PageProps) {
           account={statusAccount}
           onClose={() => setStatusAccount(null)}
           onSaved={() => {
+            if (statusAccount.active) setStatus("active");
             setStatusAccount(null);
             accounts.reload();
             drivers.reload();
@@ -1770,7 +1877,7 @@ function InvitationForm({
               >
                 <option value="">Nuevo chofer</option>
                 {drivers
-                  .filter((driver) => driver.active)
+                  .filter((driver) => driver.active && driver.role === "DRIVER")
                   .map((driver) => (
                     <option key={driver.id} value={driver.id}>
                       {driver.name}
@@ -1978,12 +2085,17 @@ export function DriversPage({ onNotify, onNavigate }: PageProps) {
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
   const trucks = useLoad<{ items: Truck[] }>("/trucks");
   const [tab, setTab] = useState("drivers");
+  const [status, setStatus] = useState("active");
   const [editing, setEditing] = useState<Driver | "new" | null>(null);
   const [passwordDriver, setPasswordDriver] = useState<Driver | null>(null);
   const [inviting, setInviting] = useState(false);
   const [revision, setRevision] = useState(0);
   const pageSize = usePageSize(430, 86);
-  const paged = usePagination(drivers.data?.items || [], pageSize);
+  const items =
+    drivers.data?.items.filter(
+      (driver) => status === "all" || driver.active === (status === "active"),
+    ) || [];
+  const paged = usePagination(items, pageSize, status);
   return (
     <div className="admin-page">
       <PageHeading
@@ -2009,21 +2121,38 @@ export function DriversPage({ onNotify, onNavigate }: PageProps) {
           </div>
         }
       />
-      <div className="admin-tabs" aria-label="Equipo y accesos">
-        <button
-          className={tab === "drivers" ? "active" : ""}
-          aria-pressed={tab === "drivers"}
-          onClick={() => setTab("drivers")}
-        >
-          Choferes <span>{drivers.data?.items.length ?? "—"}</span>
-        </button>
-        <button
-          className={tab === "invitations" ? "active" : ""}
-          aria-pressed={tab === "invitations"}
-          onClick={() => setTab("invitations")}
-        >
-          Invitaciones
-        </button>
+      <div className="admin-toolbar admin-team-toolbar">
+        <div className="admin-tabs" aria-label="Equipo y accesos">
+          <button
+            className={tab === "drivers" ? "active" : ""}
+            aria-pressed={tab === "drivers"}
+            onClick={() => setTab("drivers")}
+          >
+            Choferes <span>{drivers.data ? items.length : "—"}</span>
+          </button>
+          <button
+            className={tab === "invitations" ? "active" : ""}
+            aria-pressed={tab === "invitations"}
+            onClick={() => setTab("invitations")}
+          >
+            Invitaciones
+          </button>
+        </div>
+        {tab === "drivers" && (
+          <div className="admin-user-filters">
+            <label>
+              <span className="sr-only">Filtrar choferes por estado</span>
+              <select
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
+              >
+                <option value="active">Activos</option>
+                <option value="inactive">Desactivados</option>
+                <option value="all">Todos los estados</option>
+              </select>
+            </label>
+          </div>
+        )}
       </div>
       <LoadState
         loading={drivers.loading && !drivers.data}
@@ -2075,11 +2204,11 @@ export function DriversPage({ onNotify, onNavigate }: PageProps) {
               <span
                 className={`badge ${driver.active ? "success" : "neutral"}`}
               >
-                {driver.role === "ADMIN"
-                  ? "Administrador"
-                  : driver.active
-                    ? "Activo"
-                    : "Inactivo"}
+                {!driver.active
+                  ? "Inactivo"
+                  : driver.role === "ADMIN"
+                    ? "Administrador"
+                    : "Activo"}
               </span>
               <div className="admin-row-actions">
                 <button
@@ -2104,16 +2233,24 @@ export function DriversPage({ onNotify, onNavigate }: PageProps) {
               </div>
             </article>
           ))}
-          {!drivers.data.items.length && (
+          {!items.length && (
             <EmptyState
-              title="Todavía no hay choferes"
-              description="Agregá un chofer o enviale una invitación."
+              title={
+                drivers.data.items.length
+                  ? "No hay choferes con este filtro"
+                  : "Todavía no hay choferes"
+              }
+              description={
+                drivers.data.items.length
+                  ? "Probá con otro estado."
+                  : "Agregá un chofer o enviale una invitación."
+              }
             />
           )}
           <Pagination
             page={paged.page}
             pageSize={pageSize}
-            total={drivers.data.items.length}
+            total={items.length}
             onPage={paged.setPage}
           />
         </section>
