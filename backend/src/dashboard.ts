@@ -39,7 +39,8 @@ export function dashboardRouter() {
         driverDtos(user),
       ]);
     const obligations = allObligations.filter((o) => o.active && o.ownerActive);
-    const currentDriver = user.role === "DRIVER" ? (drivers[0] ?? null) : null;
+    const currentDriver =
+      drivers.find((driver) => driver.userId === user.id && driver.active) ?? null;
     res.json({
       stats: {
         tripsThisMonth: sum._count,

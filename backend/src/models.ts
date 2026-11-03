@@ -116,7 +116,7 @@ export async function driverDtos(user: AuthUser, db: Tx = getDb()) {
     phone: row.phone,
     role: row.user.role,
     accountActive: row.user.active,
-    active: row.user.active && row.user.role === "DRIVER",
+    active: row.user.active,
     assignedTruckId: row.assignedTruckId,
     truck: row.assignedTruckId
       ? (truckMap.get(row.assignedTruckId) ?? null)
@@ -174,7 +174,7 @@ export async function obligationDtos(
       active: row.active,
       ownerActive: row.truckId
         ? truck?.active === true
-        : row.driver?.user.active === true && row.driver.user.role === "DRIVER",
+        : row.driver?.user.active === true,
       version: row.version,
       ...calculateStatus(row, truck?.odometer ?? null, now),
       truck,
@@ -310,10 +310,6 @@ export async function activeDriver(tx: Tx, id: string) {
     where: { id },
     include: { user: true },
   });
-  ensure(
-    driver?.user.active && driver.user.role === "DRIVER",
-    400,
-    "Seleccioná un chofer activo.",
-  );
+  ensure(driver?.user.active, 400, "Seleccioná un chofer activo.");
   return driver;
 }
