@@ -82,7 +82,7 @@ def bootstrap(args, recovery=None):
     manifest = json.loads(Path(args.manifest).read_text())
     expected = manifest['expectedRelease']
     require(re.fullmatch('[a-f0-9]{64}', expected), 'Invalid expected deployment.')
-    names = {'ci_deploy.py', 'install_vps.py', 'update_vps.py', 'setup_ci.py', 'ci.pub'}
+    names = {'ci_deploy.py', 'ci_migrations.py', 'install_vps.py', 'update_vps.py', 'setup_ci.py', 'ci.pub'}
     require(set(manifest['files']) == names, 'Unexpected bootstrap files.')
     for name, fingerprint in manifest['files'].items():
         path = source / name
@@ -142,6 +142,8 @@ def bootstrap(args, recovery=None):
                 require(sha256(OPS / name) == manifest['files'][name], 'Operational copy hash mismatch.')
             root_file(OPS / 'deploy-root', '#!/bin/sh\n[ "$#" -eq 0 ] || exit 64\nexec /usr/bin/python3 -I /opt/tomasini/ops/ci/ci_deploy.py root\n', 0o755)
             (BASE / 'private/ci').mkdir(mode=0o700)
+        root_file(OPS / 'ci_migrations.py', (source / 'ci_migrations.py').read_bytes(), 0o644)
+        require(sha256(OPS / 'ci_migrations.py') == manifest['files']['ci_migrations.py'], 'Migration helper hash mismatch.')
         # Exercise the complete Linux preparation path before granting unattended access.
         sys.path.insert(0, str(OPS))
         import ci_deploy as ci
@@ -186,7 +188,7 @@ def bootstrap(args, recovery=None):
         require(sha256(BASE / 'private/api.env') == env_sha, 'Application environment changed.')
         receipt = {'status': 'ci_access_configured', 'user': 'tomasini-ci', 'host': '72.60.50.213', 'expectedRelease': expected,
                    'publicKey': key, 'timestamp': time.time(), 'files': manifest['files'],
-                   'verification': {'existingApplicationsPreserved': True, 'applicationNotRestarted': True, 'fullBuildProbePassed': True, 'schemaPolicy': 'identical-to-active-only'}}
+                   'verification': {'existingApplicationsPreserved': True, 'applicationNotRestarted': True, 'fullBuildProbePassed': True, 'schemaPolicy': 'reviewed-additive-migrations'}}
         root_file(BASE / 'private/ci-bootstrap.json', json.dumps(receipt, indent=2))
         public_receipt = source / 'ci-public-receipt.json'
         require(source.parent == Path('/home/mozzi') and re.fullmatch(r'tomasini-ci-(?:bootstrap|repair)-[a-f0-9]{16}', source.name), 'Unexpected public receipt destination.')

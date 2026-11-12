@@ -4,7 +4,7 @@ Repositorio: [LautaroGalvan2024/transporte-tomasini](https://github.com/LautaroG
 
 ## Al abrir un PR y al integrar en main
 
-`CI` verifica los PR dirigidos a `main`, los pushes a otras ramas y las ejecuciones manuales. `Deploy Tomasini` verifica y publica cada push a `main`, incluidos los merges, y permite una ejecución manual seleccionando `main`. Otras ramas y forks no pueden ejecutar el job de producción.
+`CI` verifica cada PR dirigido a `main` y permite ejecuciones manuales. La rama de producción requiere un PR con la comprobación **Build, tests and isolated PostgreSQL** de GitHub Actions aprobada y al día. No se exige otro revisor para repositorios operados por una sola persona. Al hacer merge, [Deploy Tomasini](https://github.com/LautaroGalvan2024/transporte-tomasini/actions/workflows/deploy.yml) vuelve a verificar el commit exacto de `main` y lo publica. También puede ejecutarse manualmente eligiendo `main`. Las demás ramas y los forks no reciben las credenciales de producción.
 
 Ambos usan Ubuntu 24.04, Node.js **24.21.0**, `npm ci` y el mismo `scripts/ci-check.mjs`:
 
@@ -35,6 +35,8 @@ El workflow nunca ejecuta `ssh-keyscan` para decidir en quién confiar. Una clav
 
 La preparación inicial del receptor en la VPS es un procedimiento administrativo separado. Debe instalar el código revisado de `infra/ci_deploy.py` fuera del alcance del usuario de aplicación, registrar la llave pública exclusiva con comando forzado y limitar sudo al receptor. `tomasini-ci` no tiene shell, PTY, forwarding ni acceso general de administración. Los workflows no instalan ni modifican ese receptor.
 
+Para una instalación que ya cuenta con el receptor original de sólo código, `scripts/upgrade-ci-receiver.ps1` habilita una única vez el receptor con migraciones declarativas. Pide sudo en una terminal local, comprueba la huella del receptor anterior, instala solamente los dos módulos verificados y conserva la llave y regla sudo existentes. Ese comando no forma parte de los despliegues de la aplicación.
+
 ## Publicación y conservación de datos
 
 El job tiene `contents: read`, environment `production` y concurrencia `tomasini-production` con `cancel-in-progress: false`. Una publicación en curso termina antes de comenzar otra. GitHub puede reemplazar una ejecución pendiente por una más reciente dentro del mismo grupo; no se garantiza publicar cada commit intermedio. [Comportamiento documentado de concurrencia](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
@@ -49,9 +51,31 @@ deploy <sha256-del-tar-gz> <commit-git-de-40-caracteres>
 
 El `.tar.gz` viaja por stdin, sin SCP ni shell remota. SSH usa host verificado, una sola identidad, sin agente ni forwarding. El token de GitHub y la llave privada no se pasan a los procesos de empaquetado ni al ambiente del servidor.
 
-El receptor exige que el esquema y **todas** las migraciones coincidan con la versión activa. Una migración nueva o modificada bloquea la publicación automática; debe revisarse y aplicarse mediante el procedimiento administrativo de actualización antes de volver a publicar. El receptor conserva usuarios, viajes, configuración SMTP, cookies y datos. Crea respaldo, prepara un release propio, cambia `current` de forma atómica y reinicia únicamente `tomasini.service`. Comprueba salud y continuidad de Mozzi/Horizontes; ante un fallo recupera el código anterior de Tomasini sin resetear la base.
+El receptor coteja el esquema y el historial ya aplicado con el release activo. Los cambios de código y los nuevos campos opcionales descritos más abajo se publican sin contraseña ni sesión de consola. Crea y valida un respaldo antes de modificar el esquema o activar la versión, cambia `current` de forma atómica y reinicia únicamente `tomasini.service`. Comprueba la continuidad de Mozzi y Horizontes. Si falla la activación, puede restituir el código anterior porque las columnas nuevas son opcionales; no deshace una migración confirmada ni restaura la base sobre datos posteriores.
+
+El último paso de Actions comprueba desde fuera de la VPS que el HTML, JavaScript y CSS públicos coinciden con el build, que `/api/ready` responde y que el Excel exige sesión.
 
 El resumen de Actions muestra únicamente commit, SHA del release y versión anterior confirmados por el receptor. Si SSH se interrumpe o falta confirmación, revisar el recibo y diagnóstico privado en la VPS antes de reintentar: una interrupción del runner no demuestra que la publicación remota haya fallado. No reutilizar el instalador inicial ni restaurar bases automáticamente.
+
+## Agregar un campo desde un PR
+
+1. Agregar el campo opcional al modelo existente en `backend/prisma/schema.prisma`. Por ejemplo, `diasEspera Int?` en `Trip`.
+2. Crear una carpeta posterior a la última migración, por ejemplo `backend/prisma/migrations/202701150001_dias_espera/`. Incluir el archivo `ci.json`:
+
+   ```json
+   {"version":1,"operations":[{"op":"addNullableColumn","table":"Trip","column":"diasEspera","type":"Int","nonnegative":true}]}
+   ```
+
+3. Generar `migration.sql` con el módulo del repositorio, sin modificar migraciones existentes. En Linux:
+
+   ```sh
+   python3 infra/ci_migrations.py backend/prisma/migrations/202701150001_dias_espera/ci.json > backend/prisma/migrations/202701150001_dias_espera/migration.sql
+   ```
+
+   El SQL debe conservar sus bytes UTF-8, sin BOM y con finales de línea LF. Revisar y subir ambos archivos con el cambio del modelo. El ejemplo es ilustrativo: no hay que agregarlo para publicar código.
+4. CI contrasta el plan, el SQL y el esquema, y prueba la migración en PostgreSQL aislado. Después del merge, el receptor instalado en la VPS vuelve a generar el SQL desde el plan y lo aplica junto con el registro de Prisma en una sola transacción, comprobando base, esquema, rol e historial. El rol migrador de producción sigue sin LOGIN ni contraseña. Ni el release ni GitHub reciben la credencial de un propietario de la base.
+
+La política admite columnas opcionales `Int`, `BigInt`, `String` y `Boolean` en tablas existentes del esquema Tomasini; los enteros pueden exigir valores no negativos. Borrados, renombres, columnas obligatorias, nuevas tablas, SQL libre y modificaciones del historial quedan fuera de esta política: CI los detiene. Seguir el [procedimiento revisado de migración](deployment.md) si se necesita uno de esos cambios.
 
 ## Referencias y versiones fijadas
 

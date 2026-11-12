@@ -6,6 +6,8 @@ Aplicación web para registrar viajes, revisar kilómetros y controlar servicios
 
 [Abrir Transporte Tomasini](https://tomasini.72-60-50-213.sslip.io).
 
+Para publicar, abrí un pull request a `main`. Cuando CI aprueba y se hace el merge, [Deploy Tomasini](https://github.com/LautaroGalvan2024/transporte-tomasini/actions/workflows/deploy.yml) compila y prueba el commit, hace el respaldo y activa la versión en la VPS sin pedir contraseña. El último paso comprueba el sitio público. El procedimiento para agregar columnas a la base está en [GitHub Actions](docs/github-actions.md).
+
 Publicado y verificado el 2 de noviembre de 2026. El administrador inicial debe cambiar su contraseña al ingresar; el acceso está guardado únicamente en el archivo privado `.local/production-access/3e2a233979d5a9df/admin-inicial.json`. Producción inicia sin datos ficticios. Desde administración se cargan los camiones, choferes y vencimientos reales. El correo externo queda pendiente de configurar SMTP y el destinatario.
 
 ## Puesta en marcha local

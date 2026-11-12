@@ -46,6 +46,7 @@ try {
   const testEnvironment = await prepareDatabase();
   prepared = true;
   const integrationEnvironment = { ...environment, ...testEnvironment };
+  run("python3", ["infra/ci_check_migrations.py", "upgrade"], integrationEnvironment);
   run(
     "npm",
     ["run", "db:migrate", "--workspace", "@tomasini/backend"],
@@ -62,6 +63,7 @@ try {
     ["--test", "scripts/test-migrations.mjs"],
     integrationEnvironment,
   );
+  run("python3", ["infra/ci_check_migrations.py", "probe"], integrationEnvironment);
   console.log(
     "CI completa: compilación, tipos, pruebas unitarias, API PostgreSQL y migraciones verificadas.",
   );
