@@ -108,20 +108,23 @@ def verify_ledger(sql, history):
     require(rows == [f"{item['name']}|{item['sha256']}|t" for item in history], 'Unexpected Prisma history.')
 
 
-def upgrade(scratch):
-    previous, pending = validate_transition(comparison_base(), scratch)
-    sql = test_connection('MIGRATION_DATABASE_URL')
-    require(sql("SELECT to_regclass('tomasini._prisma_migrations') IS NULL;") == 't',
-            'Upgrade rehearsal requires a freshly provisioned database.')
-    # Prisma creates and tracks the previous release just as it did before a production upgrade.
-    config = previous / 'prisma.config.mjs'
+def deploy_prisma(release):
+    config = release / 'prisma.config.mjs'
     config.write_text("""export default { schema: 'backend/prisma/schema.prisma',
   migrations: { path: 'backend/prisma/migrations' }, datasource: { url: process.env.MIGRATION_DATABASE_URL } };
 """)
     cli = ROOT / 'node_modules/prisma/build/index.js'
     result = subprocess.run(['node', str(cli), 'migrate', 'deploy', '--config', str(config)],
-                            cwd=previous, capture_output=True, timeout=100)
-    require(result.returncode == 0, 'Could not install the previous schema on the isolated database.')
+                            cwd=release, capture_output=True, timeout=100)
+    require(result.returncode == 0, 'Prisma could not deploy the reviewed history on the isolated database.')
+
+
+def upgrade(scratch):
+    previous, pending = validate_transition(comparison_base(), scratch)
+    sql = test_connection('MIGRATION_DATABASE_URL')
+    require(sql("SELECT to_regclass('tomasini._prisma_migrations') IS NULL;") == 't',
+            'Upgrade rehearsal requires a freshly provisioned database.')
+    deploy_prisma(previous)
     history = migration_history(previous)
     verify_ledger(sql, history)
     if pending:
@@ -151,6 +154,15 @@ def probe(scratch):
     pending = plan_migrations(ROOT, candidate)
     truck = 'b39485f5-a348-455d-b14f-bb84320d67ee'
     app(f"""INSERT INTO tomasini."Truck" (id, plate, label) VALUES ('{truck}', 'CIPROBE', 'Ficticio CI');""")
+    # A caller using the application role or a different history must leave the migration pending.
+    divergent = [*history[:-1], {**history[-1], 'sha256': '0' * 64}]
+    for connection, starting_history in [(app, history), (sql, divergent)]:
+        try:
+            apply_migrations(connection, starting_history, pending, database='tomasini_test')
+        except ValueError:
+            verify_ledger(sql, history)
+        else:
+            raise ValueError('The receiver accepted a different role or a divergent Prisma history.')
     apply_migrations(sql, history, pending, database='tomasini_test')
     verify_ledger(sql, migration_history(candidate))
     require(app(f"""SELECT "ciPipelineCount" IS NULL FROM tomasini."Truck" WHERE id='{truck}';""") == 't',
@@ -164,6 +176,8 @@ def probe(scratch):
         raise ValueError('Nonnegative constraint did not reject negative values.')
     require(app(f"""SELECT "ciPipelineCount" FROM tomasini."Truck" WHERE id='{truck}';""") == '0',
             'Valid zero count was not retained.')
+    deploy_prisma(candidate)
+    verify_ledger(sql, migration_history(candidate))
     print('Production migration transaction, Prisma history, existing row and application permissions verified.')
 
 
