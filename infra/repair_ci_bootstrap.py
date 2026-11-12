@@ -42,7 +42,7 @@ def repair(args):
     source = Path(__file__).resolve().parent
     require(source.parent == Path('/home/mozzi') and re.fullmatch(r'tomasini-ci-repair-[a-f0-9]{16}', source.name), 'Unexpected recovery source directory.')
     manifest = json.loads(Path(args.manifest).read_text())
-    names = {'repair_ci_bootstrap.py', 'setup_ci.py', 'ci_deploy.py', 'install_vps.py', 'update_vps.py', 'ci.pub', 'previous-setup.json', 'setup.json'}
+    names = {'repair_ci_bootstrap.py', 'setup_ci.py', 'ci_deploy.py', 'ci_migrations.py', 'install_vps.py', 'update_vps.py', 'ci.pub', 'previous-setup.json', 'setup.json'}
     require(set(manifest['files']) == names, 'Unexpected recovery files.')
     for name, fingerprint in manifest['files'].items():
         path = source / name

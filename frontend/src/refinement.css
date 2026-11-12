@@ -369,7 +369,7 @@
 }
 .compact-trip-form .calculated-distance {
   padding: 16px;
-  margin: 10px 0 0;
+  margin: 10px 0 16px;
   border-style: solid;
 }
 .compact-trip-form .odometer-reference {
@@ -626,7 +626,7 @@
     margin-top: auto;
   }
   .trip-list-panel .trip-filters {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
   .trip-list-panel .trip-filters input,
   .trip-list-panel .trip-filters select {

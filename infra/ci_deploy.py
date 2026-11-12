@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Fixed SSH receiver and privileged code-only deployer. Installed root-owned by setup_ci.py."""
+"""Fixed SSH receiver and deployment entry point installed under /opt/tomasini/ops/ci."""
 from __future__ import annotations
 
 import hashlib
@@ -189,13 +189,14 @@ def active_release_sha(old):
 def root_helpers():
     # Python -I ignores caller PYTHONPATH and the uploaded release is never imported as root.
     require(Path(__file__).resolve().parent == OPS, 'Deployer is not installed in the trusted directory.')
-    for path in [OPS, OPS / 'ci_deploy.py', OPS / 'install_vps.py', OPS / 'update_vps.py']:
+    for path in [OPS, OPS / 'ci_deploy.py', OPS / 'ci_migrations.py', OPS / 'install_vps.py', OPS / 'update_vps.py']:
         info = path.lstat()
         require(info.st_uid == 0 and not stat.S_ISLNK(info.st_mode) and info.st_mode & 0o022 == 0, 'Operational code is not immutable.')
     sys.path.insert(0, str(OPS))
     import install_vps as core
     import update_vps as update
-    return core, update
+    import ci_migrations
+    return core, update, ci_migrations
 
 
 def build_arguments(source, identifier, probe=False):
@@ -366,7 +367,7 @@ def deploy_root(stream):
     request = json.loads(header)
     require(set(request) == {'release', 'commit'}, 'Unexpected protocol fields.')
     release_sha, commit = parse_command(f"deploy {request['release']} {request['commit']}")
-    core, update = root_helpers()
+    core, update, ci_migrations = root_helpers()
     directory = BASE / 'private/ci' / release_sha[:16]
     release = BASE / 'releases' / release_sha[:16]
     lock_fd = os.open(BASE / 'private/update.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -391,21 +392,26 @@ def deploy_root(stream):
         source = directory / 'source'
         source.mkdir(mode=0o755)
         extract_verified(archive, source)
-        verify_no_schema_change(old, source)
+        declared = ci_migrations.plan_migrations(old, source)
         migrations = [{'name': path.parent.name, 'sha256': digest(path)} for path in sorted((source / 'backend/prisma/migrations').glob('*/migration.sql'))]
-        update.check_history(update.migration_history(), migrations, [])
+        applied = update.migration_history()
+        # A committed additive migration may remain after an activation failure. Only
+        # the identical declared suffix can consume this state on a subsequent release.
+        require(len(migrations) - len(declared) <= len(applied) <= len(migrations), 'Unexpected applied migration count.')
+        pending = declared[len(applied) - (len(migrations) - len(declared)):]
+        update.check_history(applied, migrations, [entry['name'] for entry in pending])
         snapshot = core.snapshot_existing()
         snapshot.update({'apiEnvSha256': digest(update.APP_ENV), 'hbaSha256': digest(core.HBA), 'serviceSha256': digest(core.UNIT), 'counts': update.counts()})
         update.verify_preserved(snapshot)
         core.write_new(directory / 'preflight.json', json.dumps(snapshot, indent=2))
-        switched, phase = False, 'build'
+        switched, database_changed, phase = False, False, 'build'
         try:
             volume = build_isolated(core, source, release_sha[:16], directory)
             try:
                 freeze_copy(volume['project'], release)
             finally:
                 cleanup_build_volume(core, volume, discard=True)
-            verify_no_schema_change(old, release)
+            verify_no_schema_change(source, release)
             phase = 'backup'
             backup = BASE / 'backups' / f'ci-{release_sha[:16]}-before.dump'
             require(not backup.exists() and not backup.is_symlink(), 'Backup already exists.')
@@ -413,8 +419,16 @@ def deploy_root(stream):
                      env={**SAFE_ENV, 'PGPASSFILE': str(BASE / 'private/backup.pgpass'), 'PGCONNECT_TIMEOUT': '10'}, timeout=180, label='Respaldo previo CI')
             os.chmod(backup, 0o600)
             core.run(['/usr/bin/pg_restore', '--list', str(backup)], label='Validar respaldo CI')
-            core.write_new(directory / 'backup-manifest.json', json.dumps({'database': 'tomasini_prod', 'sha256': digest(backup), 'purpose': 'before-code-only-ci', 'createdAt': time.time()}))
+            core.write_new(directory / 'backup-manifest.json', json.dumps({'database': 'tomasini_prod', 'sha256': digest(backup),
+                           'purpose': 'before-additive-ci' if declared else 'before-code-only-ci', 'createdAt': time.time()}))
             update.verify_preserved(snapshot)
+            if pending:
+                phase = 'migrate'
+                # A lost client response after COMMIT leaves the outcome unknown.
+                database_changed = None
+                ci_migrations.apply_migrations(core.dbsql, migrations[:len(applied)], pending)
+                database_changed = True
+            update.check_history(update.migration_history(), migrations, [])
             phase = 'activate'
             update.switch_release(release, old)
             switched = True
@@ -426,10 +440,11 @@ def deploy_root(stream):
             postflight = core.snapshot_existing()
             postflight.update({'apiEnvSha256': digest(update.APP_ENV), 'counts': update.counts()})
             core.write_new(directory / 'postflight.json', json.dumps(postflight, indent=2))
-            receipt = {'status': 'deployed', 'kind': 'code-only-ci', 'commit': commit, 'release': release_sha,
+            receipt = {'status': 'deployed', 'kind': 'additive-ci' if declared else 'code-only-ci', 'commit': commit, 'release': release_sha,
                        'previousRelease': previous_sha, 'database': 'tomasini_prod', 'timestamp': time.time(),
+                       'appliedMigrations': [entry['name'] for entry in pending],
                        'verification': {'existingApplicationsPreserved': True, 'apiEnvironmentPreserved': True, 'migrationRoleLocked': True,
-                                        'schemaUnchanged': True, 'backupBeforeActivation': True, 'publicReadiness': 200}}
+                                        'schemaUnchanged': not declared, 'backupBeforeActivation': True, 'publicReadiness': 200}}
             core.write_new(directory / 'receipt.json', json.dumps(receipt, indent=2))
         except Exception as error:
             rollback = False
@@ -441,7 +456,7 @@ def deploy_root(stream):
                     rollback = True
                 except Exception:
                     pass
-            core.write_new(directory / 'failure.json', json.dumps({'phase': phase, 'timestamp': time.time(), 'codeRollbackVerified': rollback, 'databaseChanged': False, 'errorType': type(error).__name__}))
+            core.write_new(directory / 'failure.json', json.dumps({'phase': phase, 'timestamp': time.time(), 'codeRollbackVerified': rollback, 'databaseChanged': database_changed, 'errorType': type(error).__name__}))
             raise
         # Stdout is a receipt, never process output, private paths, database contents or credentials.
         print(json.dumps({key: receipt[key] for key in ('status', 'commit', 'release', 'previousRelease')}), flush=True)

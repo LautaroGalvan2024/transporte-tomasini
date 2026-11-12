@@ -5,3 +5,4 @@
 - No imprimir secretos. Archivos privados en .local/ o .env ignorados. Migraciones revisadas, con comprobación explícita de base/rol; no db push, reset ni migraciones al arrancar.
 - API con sesiones PostgreSQL, autorización por rol/propiedad y protección CSRF. Viajes auditables e idempotentes; revisados solo corregibles por administración.
 - Probar con PostgreSQL propio y aislado. Compilar y verificar tipos, pruebas funcionales y revisión visual de celular/escritorio antes de entregar. No simular verificaciones con choferes reales.
+- Entregar por pull request a `main`. Cuando pasen las verificaciones, integrar y seguir el workflow **Deploy Tomasini** hasta confirmar en la VPS y en el sitio público el commit publicado. Para migraciones automáticas usar el contrato revisado de `docs/github-actions.md`.

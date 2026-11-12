@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getDb, lockTrucks, transaction, type Tx } from "./db.js";
+import { getDb, lockTrucks, lockTrailers, transaction, type Tx } from "./db.js";
 import { currentUser, requireAdmin } from "./auth.js";
 import { ensure } from "./errors.js";
 import {
@@ -15,9 +15,37 @@ import { truckDtos, driverDtos, audit, activeTruck } from "./models.js";
 import { hashPassword } from "./password.js";
 import { revokeDriverInvitations } from "./invitations.js";
 import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
-import { odometerBody, ODOMETER_ADJUSTED } from "./odometer.js";
+import {
+  odometerBody,
+  ODOMETER_ADJUSTED,
+  ODOMETER_INITIALIZED,
+} from "./odometer.js";
+import { availableFleetPlate } from "./trailer-models.js";
 
 async function unassignTruck(tx: Tx, truckId: string, actorId: string) {
+  const trailer = await tx.trailer.findUnique({
+    where: { assignedTruckId: truckId },
+  });
+  if (trailer) {
+    await lockTrailers(tx, [trailer.id]);
+    const updated = await tx.trailer.update({
+      where: { id: trailer.id },
+      data: {
+        assignedTruckId: null,
+        version: { increment: 1 },
+      },
+    });
+    await audit(
+      tx,
+      actorId,
+      "TRAILER",
+      trailer.id,
+      "TRUCK_UNASSIGNED",
+      trailer,
+      updated,
+      "Camión dado de baja.",
+    );
+  }
   const drivers = await tx.driver.findMany({
     where: { assignedTruckId: truckId },
     select: { id: true },
@@ -47,15 +75,23 @@ export function trucksRouter() {
     const data = truckCreate.parse(req.body),
       user = currentUser(req);
     ensure(
-      new Date(data.initialOdometerAt).getTime() <= Date.now() + 60_000,
+      data.initialOdometerAt == null ||
+        new Date(data.initialOdometerAt).getTime() <= Date.now() + 60_000,
       400,
       "La lectura inicial no puede ser futura.",
     );
     const id = await transaction(async (tx) => {
       await lockAccessChanges(tx);
       await assertAdminAccess(tx, user.id, req.sessionId);
+      await availableFleetPlate(tx, data.plate);
       const truck = await tx.truck.create({
-        data: { ...data, initialOdometerAt: new Date(data.initialOdometerAt) },
+        data: {
+          ...data,
+          initialOdometer: data.initialOdometer ?? null,
+          initialOdometerAt: data.initialOdometerAt
+            ? new Date(data.initialOdometerAt)
+            : null,
+        },
       });
       await audit(tx, user.id, "TRUCK", truck.id, "CREATED", undefined, truck);
       return truck.id;
@@ -71,6 +107,7 @@ export function trucksRouter() {
       await lockTrucks(tx, [id]);
       const old = await tx.truck.findUnique({ where: { id } });
       ensure(old, 404, "No se encontró el camión.");
+      if (input.plate) await availableFleetPlate(tx, input.plate, id);
       const row = await tx.truck.update({ where: { id }, data: input });
       if (input.active === false)
         await unassignTruck(tx, id, currentUser(req).id);
@@ -116,14 +153,46 @@ export function trucksRouter() {
       );
       ensure(
         current.odometer === input.expectedOdometer &&
-          Date.parse(current.odometerAt) ===
-            Date.parse(input.expectedOdometerAt),
+          (current.odometerAt === null
+            ? input.expectedOdometerAt === null
+            : input.expectedOdometerAt !== null &&
+              Date.parse(current.odometerAt) ===
+                Date.parse(input.expectedOdometerAt)),
         409,
         "El odómetro cambió desde que lo abriste. Actualizá la lectura y revisá tu corrección.",
         "ODOMETER_VERSION_CONFLICT",
       );
       if (current.odometer === input.odometer) return current;
       const now = Date.now();
+      if (current.odometer === null) {
+        const at = new Date(now);
+        await tx.truck.update({
+          where: { id },
+          data: {
+            initialOdometer: input.odometer,
+            initialOdometerAt: at,
+          },
+        });
+        await audit(
+          tx,
+          actor.id,
+          "TRUCK",
+          id,
+          ODOMETER_INITIALIZED,
+          { version: 1, odometer: null, odometerAt: null },
+          {
+            version: 1,
+            odometer: input.odometer,
+            odometerAt: at.toISOString(),
+          },
+        );
+        return (await truckDtos(tx, id))[0];
+      }
+      ensure(
+        current.odometerAt !== null,
+        409,
+        "Falta la fecha de la lectura actual.",
+      );
       ensure(
         Date.parse(current.odometerAt) <= now,
         409,

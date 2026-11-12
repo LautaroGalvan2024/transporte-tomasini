@@ -8,7 +8,7 @@ $keyPath = (Resolve-Path -LiteralPath $PublicKeyPath).Path
 $publicKey = Get-Content -LiteralPath $keyPath -Raw
 if (-not $keyPath.EndsWith('.pub') -or $publicKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: [^\r\n]*)?\r?\n?$') { throw 'Solo se admite la clave pública Ed25519 revisada.' }
 $files, $sources = [ordered]@{}, [ordered]@{}
-foreach ($name in @('repair_ci_bootstrap.py','setup_ci.py','ci_deploy.py','install_vps.py','update_vps.py')) {
+foreach ($name in @('repair_ci_bootstrap.py','setup_ci.py','ci_deploy.py','ci_migrations.py','install_vps.py','update_vps.py')) {
   $path = Join-Path $root ('infra\' + $name)
   $files[$name] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
   $sources[$name] = $path
@@ -24,7 +24,7 @@ $identity = (& whoami.exe).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo proteger la carpeta local.' }
 $expected = '1bce449e4b5e8c4a9b46ecedee9c37066b23e6ee2d3041ac7319acd82f949080'
 $setupFiles = [ordered]@{}
-foreach ($name in @('setup_ci.py','ci_deploy.py','install_vps.py','update_vps.py','ci.pub')) { $setupFiles[$name] = $files[$name] }
+foreach ($name in @('setup_ci.py','ci_deploy.py','ci_migrations.py','install_vps.py','update_vps.py','ci.pub')) { $setupFiles[$name] = $files[$name] }
 $setupPath = Join-Path $directory 'setup.json'
 @{version=1; expectedRelease=$expected; files=$setupFiles} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $setupPath -Encoding utf8NoBOM
 $files['setup.json'] = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()

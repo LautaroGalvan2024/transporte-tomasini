@@ -6,13 +6,22 @@ import { ensure } from "./errors.js";
 import { instant, km } from "./validation.js";
 
 export const ODOMETER_ADJUSTED = "ODOMETER_ADJUSTED";
+export const ODOMETER_INITIALIZED = "ODOMETER_INITIALIZED";
 export const odometerBody = z
   .object({
     odometer: km,
-    expectedOdometer: km,
-    expectedOdometerAt: instant,
+    expectedOdometer: km.nullable(),
+    expectedOdometerAt: instant.nullable(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      (value.expectedOdometer === null) === (value.expectedOdometerAt === null),
+    {
+      message: "La lectura de referencia está incompleta. Actualizá el camión.",
+      path: ["expectedOdometerAt"],
+    },
+  );
 
 const adjustmentData = z
   .object({

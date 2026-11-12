@@ -30,12 +30,16 @@ MIGRATOR = 'tomasini_prod_migrator'
 DATABASE = 'tomasini_prod'
 NODE = BASE / 'runtime/bin/node'
 NPM = BASE / 'runtime/lib/node_modules/npm/bin/npm-cli.js'
+FLEET_MIGRATION = '202611040001_trailers_optional_odometer'
+INVITATIONS_MIGRATION = '202611020002_invitations'
+CONTROLS_MIGRATION = '202611110001_trip_control_count'
+CONTROLS_SQL_SHA256 = '23cf06652284267907692f723b7b175a817ac3557063257395b018c3b96e58d8'
 
 
 def validate_plan(plan, release_sha):
     core.require(plan.get('version') == 1 and plan.get('releaseSha256') == release_sha, 'Plan de actualización incorrecto.')
     core.require(re.fullmatch(r'[a-f0-9]{64}', plan.get('previousReleaseSha256', '')) is not None, 'Falta la versión anterior exacta.')
-    core.require(plan.get('backwardCompatible') is True and plan.get('migrationPolicy') == 'additive', 'Solo se permiten migraciones aditivas revisadas compatibles con el código anterior.')
+    core.require(plan.get('migrationPolicy') == 'additive', 'Solo se permiten migraciones aditivas revisadas.')
     migrations = plan.get('migrations', [])
     core.require(bool(migrations), 'Falta el historial SQL revisado.')
     names = [item.get('name', '') for item in migrations]
@@ -45,8 +49,52 @@ def validate_plan(plan, release_sha):
                      re.fullmatch(r'[a-f0-9]{64}', item.get('sha256', '')) is not None, 'Migración revisada inválida.')
     pending = plan.get('pendingMigrations', [])
     core.require(bool(pending) and names[-len(pending):] == pending, 'Las migraciones nuevas deben ser el sufijo del historial revisado.')
-    core.require(pending == ['202611020002_invitations'], 'Este procedimiento revisado admite únicamente la ampliación de invitaciones.')
+    if pending == [CONTROLS_MIGRATION]:
+        core.require(names == ['202611020001_initial', INVITATIONS_MIGRATION, FLEET_MIGRATION, CONTROLS_MIGRATION]
+                     and migrations[-1]['sha256'] == CONTROLS_SQL_SHA256,
+                     'Controles requiere el historial de flota y el SQL exacto revisado.')
+        core.require(plan.get('backwardCompatible') is True and 'writePolicy' not in plan and 'recoveryPolicy' not in plan,
+                     'Controles requiere actualización compatible con el código de flota activo.')
+    elif pending == [INVITATIONS_MIGRATION]:
+        core.require(plan.get('backwardCompatible') is True, 'Invitaciones requiere compatibilidad con el código anterior.')
+    else:
+        core.require(pending == [FLEET_MIGRATION] and plan.get('backwardCompatible') is False and
+                     plan.get('writePolicy') == 'quiesce-tomasini' and plan.get('recoveryPolicy') == 'forward-only',
+                     'La ampliación de flota requiere pausa exclusiva de escrituras y recuperación hacia adelante.')
     return migrations
+
+
+def verify_release_migrations(release, migrations):
+    directory = release / 'backend/prisma/migrations'
+    actual = {path.parent.name: core.sha256(path) for path in directory.glob('*/migration.sql')}
+    core.require(actual == {item['name']: item['sha256'] for item in migrations},
+                 'Los archivos SQL del release no coinciden con el historial revisado.')
+
+
+def verify_migration_permissions(migration):
+    if migration == CONTROLS_MIGRATION:
+        # The existing Trip table grants already cover its new nullable column.
+        for role, permission in [('tomasini_prod_app', 'SELECT'), ('tomasini_prod_app', 'INSERT'),
+                                 ('tomasini_prod_app', 'UPDATE'), ('tomasini_prod_backup', 'SELECT')]:
+            core.require(core.dbsql(f"""SELECT has_column_privilege('{role}', 'tomasini."Trip"', 'controlCount', '{permission}');""") == 't',
+                         'La columna de controles carece de los permisos de aplicación o respaldo esperados.')
+        return
+    new_table = {FLEET_MIGRATION: 'Trailer', INVITATIONS_MIGRATION: 'Invitation'}[migration]
+    core.dbsql(f'GRANT SELECT,INSERT,UPDATE,DELETE ON tomasini."{new_table}" TO tomasini_prod_app; GRANT SELECT ON tomasini."{new_table}" TO tomasini_prod_backup;')
+    core.require(core.dbsql(f"""SELECT has_table_privilege('tomasini_prod_backup', 'tomasini."{new_table}"', 'SELECT');""") == 't', 'Falta permiso de respaldo sobre la nueva tabla.')
+
+
+def previous_receipt_sha(old):
+    candidates = [BASE / 'private/ci' / old.name / 'receipt.json',
+                  BASE / 'private/updates' / old.name / 'receipt.json', BASE / 'private/installed.json']
+    matches = set()
+    for path in candidates:
+        if path.is_file() and not path.is_symlink():
+            value = json.loads(path.read_text()).get('release', '')
+            if re.fullmatch('[a-f0-9]{64}', value) and value.startswith(old.name):
+                matches.add(value)
+    core.require(len(matches) == 1, 'Falta un recibo inequívoco de la versión activa.')
+    return matches.pop()
 
 
 def check_history(applied, migrations, expected_pending):
@@ -86,7 +134,7 @@ def runtime_environment():
     return environment
 
 
-def preflight(args, plan):
+def preflight(args, plan, *, interrupted_preparation=False):
     core.require(sys.platform.startswith('linux') and os.geteuid() == 0, 'La actualización requiere sudo en Linux.')
     core.require(re.fullmatch(r'[a-f0-9]{64}', args.release_sha) is not None and core.sha256(args.release) == args.release_sha, 'El release no coincide con su huella.')
     core.require(core.sha256(args.plan) == args.plan_sha and core.sha256(core.__file__) == args.core_sha, 'Plan o biblioteca operativa cambiaron después de revisión.')
@@ -94,13 +142,13 @@ def preflight(args, plan):
     current = BASE / 'current'
     old = BASE / 'releases' / plan['previousReleaseSha256'][:16]
     core.require(current.is_symlink() and current.resolve() == old.resolve() and old.is_dir() and old.stat().st_uid == 0, 'La versión activa no coincide con el origen del plan.')
-    previous_receipt = BASE / 'private/updates' / old.name / 'receipt.json'
-    if not previous_receipt.exists():
-        previous_receipt = BASE / 'private/installed.json'
-    core.require(json.loads(previous_receipt.read_text()).get('release') == plan['previousReleaseSha256'], 'No coincide el recibo de la versión activa.')
+    core.require(previous_receipt_sha(old) == plan['previousReleaseSha256'], 'No coincide el recibo de la versión activa.')
+    if plan['pendingMigrations'] == [CONTROLS_MIGRATION]:
+        verify_release_migrations(old, migrations[:-1])
     release = BASE / 'releases' / args.release_sha[:16]
     directory = BASE / 'private/updates' / args.release_sha[:16]
-    core.require(not release.exists() and not release.is_symlink() and not directory.exists() and not directory.is_symlink(), 'Ya hay estado para esta actualización; requiere revisión, no sobrescritura.')
+    if not interrupted_preparation:
+        core.require(not release.exists() and not release.is_symlink() and not directory.exists() and not directory.is_symlink(), 'Ya hay estado para esta actualización; requiere revisión, no sobrescritura.')
     for parent in [BASE, BASE / 'releases', BASE / 'private', BASE / 'backups']:
         core.require(parent.is_dir() and not parent.is_symlink() and parent.stat().st_uid == 0 and parent.stat().st_mode & 0o022 == 0, 'Una carpeta operativa no tiene el aislamiento esperado.')
     updates_parent = BASE / 'private/updates'
@@ -133,6 +181,62 @@ def preflight(args, plan):
     return release, directory, old, snapshot
 
 
+def verify_preparation_entry(path, *, directory, uid, private=False):
+    info = path.lstat()
+    expected_type = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    forbidden_mode = 0o077 if private else 0o022
+    core.require(expected_type and info.st_uid == uid and not info.st_mode & forbidden_mode,
+                 'Tipo, dueño o permisos inesperados en el intento interrumpido.')
+
+
+def quarantine_controls_preparation(args, plan):
+    core.require(plan.get('pendingMigrations') == [CONTROLS_MIGRATION],
+                 'La reanudación solo admite la preparación de la actualización de controles.')
+    release, directory, old, snapshot = preflight(args, plan, interrupted_preparation=True)
+    core.require(release != old and not old.is_symlink(), 'El release activo no puede archivarse.')
+    app_uid = core.pwd.getpwnam('tomasini').pw_uid
+    core.require(app_uid != 0, 'La identidad de aplicación debe ser distinta de root.')
+    verify_preparation_entry(release, directory=True, uid=app_uid)
+    verify_preparation_entry(directory, directory=True, uid=0, private=True)
+    core.require({child.name for child in directory.iterdir()} == {'plan.json', 'preflight.json'},
+                 'El intento anterior ya avanzó o su evidencia está incompleta.')
+    for name in ('plan.json', 'preflight.json'):
+        verify_preparation_entry(directory / name, directory=False, uid=0, private=True)
+    # update() stores the reviewed plan in this canonical representation before extracting.
+    core.require((directory / 'plan.json').read_bytes() == json.dumps(plan, indent=2).encode(),
+                 'El plan guardado del intento anterior difiere del autorizado.')
+    prior = json.loads((directory / 'preflight.json').read_text())
+    for field in ('migrationHistory', 'serviceSha256', 'hbaSha256', 'apiEnvSha256'):
+        core.require(field in prior and prior[field] == snapshot[field],
+                     'La configuración o el historial cambiaron desde la preparación.')
+    backup = BASE / 'backups' / f'update-{release.name}-before.dump'
+    core.require(not backup.exists() and not backup.is_symlink(),
+                 'Existe un respaldo de este intento. Revisar su fase antes de continuar.')
+    scopes = core.run(['systemctl', 'list-units', '--state=active,activating,deactivating',
+                       '--no-legend', '--plain', 'tomasini-prepare-*.scope'])
+    core.require(not scopes, 'Sigue activa una preparación de Tomasini.')
+    core.require(core.dbsql("""SELECT current_database() = 'tomasini_prod'
+        AND (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()) = 'tomasini_prod_migrator'
+        AND to_regclass('tomasini."Trip"') IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('tomasini."Trip"')
+                        AND attname = 'controlCount' AND NOT attisdropped);""") == 't',
+                 'La base, su dueño o la columna de controles no corresponden al estado previo.')
+    private = BASE / 'private'
+    core.require(release.lstat().st_dev == directory.lstat().st_dev == private.stat().st_dev,
+                 'La cuarentena requiere el mismo sistema de archivos.')
+    quarantine = private / f'interrupted-{release.name}-{secrets.token_hex(8)}'
+    quarantine.mkdir(mode=0o700)
+    # Only rename the two directory entries in their protected parents. Never follow or
+    # execute files in the incomplete, application-owned installation.
+    release.rename(quarantine / 'release')
+    try:
+        directory.rename(quarantine / 'evidence')
+    except OSError:
+        (quarantine / 'release').rename(release)
+        raise
+    return quarantine
+
+
 def verify_preserved(snapshot):
     core.verify_existing(snapshot)
     core.require(core.sha256(APP_ENV) == snapshot['apiEnvSha256'], 'La configuración privada cambió durante la actualización; no sobrescribirla.')
@@ -154,6 +258,89 @@ def create_backup(directory, release_sha):
                 'createdAt': time.time(), 'purpose': 'before-additive-update'}
     core.write_new(directory / 'backup-manifest.json', json.dumps(metadata, indent=2))
     return path
+
+
+def notification_timer_active():
+    return core.run(['systemctl', 'is-active', 'tomasini-notifications.timer'], check=False) == 'active'
+
+
+def quiesce_writers():
+    core.run(['systemctl', 'stop', 'tomasini-notifications.timer'], label='Pausar únicamente timer de correo Tomasini')
+    # Let a delivery already in progress finish; never interrupt another app or SMTP attempt.
+    for _ in range(60):
+        state = core.run(['systemctl', 'show', 'tomasini-notifications.service', '-p', 'ActiveState', '--value'])
+        if state in ('inactive', 'failed'):
+            break
+        time.sleep(0.5)
+    else:
+        raise core.InstallationError('El correo de Tomasini sigue trabajando; no se inicia la migración.')
+    core.run(['systemctl', 'stop', 'tomasini.service'], label='Pausar únicamente Tomasini para migración')
+    core.require(core.sql("SELECT count(*) FROM pg_stat_activity WHERE usename='tomasini_prod_app' AND datname='tomasini_prod';") == '0',
+                 'Quedan conexiones de escritura Tomasini; no se inicia la migración.')
+
+
+def data_fingerprints(columns=None):
+    # Hash every original column while the only application writers are stopped.
+    # No row data or secrets leave PostgreSQL in this check.
+    if columns is None:
+        columns = json.loads(core.dbsql("SELECT COALESCE(json_agg(json_build_object('table',table_name,'column',column_name) ORDER BY table_name,ordinal_position),'[]'::json) FROM information_schema.columns WHERE table_schema='tomasini' AND table_name <> '_prisma_migrations';"))
+    tables = {}
+    for item in columns:
+        tables.setdefault(item['table'], []).append(item['column'])
+    quote = lambda value: '"' + value.replace('"', '""') + '"'
+    rows = {}
+    for table, fields in tables.items():
+        statement = 'SELECT json_build_object(\'count\',count(*),\'sha\',md5(COALESCE(string_agg(to_jsonb(q)::text,\'\' ORDER BY to_jsonb(q)::text),\'\'))) FROM (SELECT ' + ','.join(map(quote, fields)) + ' FROM tomasini.' + quote(table) + ') q;'
+        rows[table] = json.loads(core.dbsql(statement))
+    return {'columns': columns, 'tables': rows}
+
+
+def verify_new_data_access(release, directory):
+    code = """import {assertDatabaseScope,getDb,disconnect} from './backend/dist/db.js';
+import {truckDtos,obligationDtos,tripDto,tripInclude} from './backend/dist/models.js';
+import {trailerDtos} from './backend/dist/trailer-models.js';
+try { await assertDatabaseScope(); const db=getDb();
+const [mode]=await db.$queryRaw`SHOW default_transaction_read_only`;
+if(mode.default_transaction_read_only!=='on')throw new Error('read-only verification required');
+const trucks=await truckDtos(); const trailers=await trailerDtos(); const obligations=await obligationDtos();
+const trips=await db.trip.findMany({include:tripInclude,take:20}); trips.forEach(tripDto);
+if(trucks.some(t=>(t.odometer===null)!==(t.odometerAt===null)))throw new Error('invalid reading pair');
+console.log(JSON.stringify({database:'tomasini_prod',trucks:trucks.length,trailers:trailers.length,obligations:obligations.length,tripsRead:trips.length,readOnly:true}));
+} finally { await disconnect(); }"""
+    result = core.prepare_scoped(['/usr/sbin/runuser', '-u', 'tomasini', '--', str(NODE), '--input-type=module', '-e', code],
+                                 env={**runtime_environment(), 'PGOPTIONS': '-c default_transaction_read_only=on'}, timeout=60,
+                                 label='Lectura real con el nuevo backend y rol exclusivo', cwd=str(release))
+    summary = json.loads(result)
+    core.require(summary.get('readOnly') is True and summary.get('database') == DATABASE, 'No se verificó acceso real del nuevo backend.')
+    core.write_new(directory / 'data-access.json', json.dumps(summary, indent=2))
+
+
+def recover_failure(old, release, switched, quiesced, migration_attempted, timer_was_active, forward_only):
+    issues = []
+    rolled_back = False
+    if forward_only and migration_attempted:
+        # Even a lost migration response is uncertain. Never expose the previous binary.
+        for unit in ['tomasini-notifications.timer', 'tomasini.service']:
+            try:
+                core.run(['systemctl', 'stop', unit], label='Mantener solo Tomasini pausado para recuperación revisada')
+            except Exception:
+                issues.append('pausa de ' + unit + ' requiere revisión')
+        issues.append('migración iniciada: recuperar hacia adelante sin restauración automática')
+    else:
+        try:
+            if switched:
+                switch_release(old, release)
+                core.run(['systemctl', 'restart', 'tomasini.service'], label='Restaurar únicamente el código anterior compatible')
+                verify_tomasini()
+                rolled_back = True
+            elif quiesced:
+                core.run(['systemctl', 'start', 'tomasini.service'], label='Retomar Tomasini sin migración')
+                verify_tomasini()
+            if quiesced and timer_was_active:
+                core.run(['systemctl', 'start', 'tomasini-notifications.timer'], label='Retomar timer propio sin migración')
+        except Exception:
+            issues.append('recuperación de código/servicio propio requiere revisión')
+    return rolled_back, issues
 
 
 def migrate_isolated(release, directory):
@@ -251,24 +438,31 @@ def export_private(directory, backup, release_sha):
     files = {'installed.json': directory / 'receipt.json', 'preflight.json': directory / 'preflight.json',
              'postflight.json': directory / 'postflight.json', 'backup-manifest.json': directory / 'backup-manifest.json',
              'tomasini_prod.dump': backup, 'migration-plan.json': directory / 'plan.json'}
+    for name in ['data-preservation.json', 'data-access.json']:
+        if (directory / name).is_file():
+            files[name] = directory / name
     copy_private_files(files, destination)
 
 
 def update(args):
     plan = json.loads(Path(args.plan).read_text())
+    if args.resume_preparation:
+        quarantine_controls_preparation(args, plan)
     release, directory, old, snapshot = preflight(args, plan)
     directory.mkdir(parents=True, mode=0o700)
     core.write_new(directory / 'preflight.json', json.dumps(snapshot, indent=2))
     core.write_new(directory / 'plan.json', json.dumps(plan, indent=2))
     switched = False
+    forward_only = plan.get('recoveryPolicy') == 'forward-only'
+    quiesced = False
+    migration_attempted = False
+    timer_was_active = False
+    fingerprints = None
     prior_logs = set((BASE / 'private').glob('command-failure-*.json'))
     phase = 'preparar release nuevo'
     try:
         release.mkdir(mode=0o755)
         core.safe_extract(args.release, release)
-        for item in plan['migrations']:
-            core.require(core.sha256(release / 'backend/prisma/migrations' / item['name'] / 'migration.sql') == item['sha256'], 'SQL extraído no coincide con el revisado.')
-        core.require(core.sha256(release / 'backend/prisma/schema.prisma') == plan['schemaSha256'], 'Esquema extraído inesperado.')
         env = {**core.SAFE_ENV, 'NODE_ENV': 'production', 'PATH': f'{BASE}/runtime/bin:' + core.SAFE_ENV['PATH'],
                'HOME': str(BASE / 'private/runtime'), 'npm_config_cache': str(BASE / 'private/runtime/npm-cache'),
                'XDG_CACHE_HOME': str(BASE / 'private/runtime/cache')}
@@ -279,15 +473,29 @@ def update(args):
                              'run', 'db:generate', '--workspace', '@tomasini/backend'], env=env, timeout=180, label='Generar cliente Linux nuevo', cwd=str(release))
         core.run(['chown', '-R', '--no-dereference', 'root:root', str(release)], label='Inmovilizar release nuevo')
         core.run(['chmod', '-R', 'a+rX,go-w', str(release)], label='Permitir lectura aislada y retirar escritura al runtime')
+        verify_release_migrations(release, plan['migrations'])
+        core.require(core.sha256(release / 'backend/prisma/schema.prisma') == plan['schemaSha256'], 'Esquema preparado inesperado.')
         verify_preserved(snapshot)
+        if forward_only:
+            phase = 'pausar escrituras exclusivas Tomasini'
+            timer_was_active = notification_timer_active()
+            quiesced = True
+            quiesce_writers()
+            fingerprints = data_fingerprints()
         phase = 'respaldo previo'
         backup = create_backup(directory, args.release_sha)
         check_history(migration_history(), plan['migrations'], plan['pendingMigrations'])
         phase = 'migración aditiva'
+        migration_attempted = True
         migrate_isolated(release, directory)
         check_history(migration_history(), plan['migrations'], [])
-        # Permissions on newly added objects only; preserve existing roles and configuration.
-        core.dbsql('GRANT SELECT,INSERT,UPDATE,DELETE ON tomasini."Invitation" TO tomasini_prod_app; GRANT SELECT ON tomasini."Invitation" TO tomasini_prod_backup;')
+        verify_migration_permissions(plan['pendingMigrations'][0])
+        if fingerprints is not None:
+            after = data_fingerprints(fingerprints['columns'])
+            core.require(after == fingerprints, 'La migración alteró datos existentes; no se habilitan escrituras.')
+            core.write_new(directory / 'data-preservation.json', json.dumps({'before': fingerprints, 'after': after, 'preserved': True}, indent=2))
+            phase = 'verificar lectura backend nueva antes de habilitar escrituras'
+            verify_new_data_access(release, directory)
         verify_preserved(snapshot)
         phase = 'activar código nuevo'
         switch_release(release, old)
@@ -296,31 +504,30 @@ def update(args):
         verify_tomasini()
         verify_public_release(release)
         verify_preserved(snapshot)
+        if quiesced and timer_was_active:
+            core.run(['systemctl', 'start', 'tomasini-notifications.timer'], label='Retomar exclusivamente timer de correo Tomasini')
+            core.require(notification_timer_active(), 'El timer de correo propio no recuperó su estado.')
         postflight = core.snapshot_existing()
         postflight.update({'tomasiniPid': core.run(['systemctl', 'show', 'tomasini.service', '-p', 'MainPID', '--value']),
                            'counts': counts(), 'migrationHistory': migration_history(), 'apiEnvSha256': core.sha256(APP_ENV)})
         core.write_new(directory / 'postflight.json', json.dumps(postflight, indent=2))
         receipt = {'kind': 'update', 'release': args.release_sha, 'previousRelease': plan['previousReleaseSha256'],
                    'database': DATABASE, 'host': core.HOST, 'timestamp': time.time(), 'migrations': plan['pendingMigrations'],
+                   'recoveryPolicy': plan.get('recoveryPolicy', 'compatible-code-rollback'),
                    'verification': {'existingApplicationsPreserved': True, 'apiEnvironmentPreserved': True, 'migrationRoleLocked': True, 'publicReadiness': 200,
+                                    'originalDataPreserved': fingerprints is not None, 'newBackendReadOnlyVerified': fingerprints is not None,
+                                    'notificationTimerRestored': not quiesced or notification_timer_active() == timer_was_active,
                                     'backupBeforeMigrationValidated': True, 'beforeSha256': core.sha256(directory / 'preflight.json'),
                                     'afterSha256': core.sha256(directory / 'postflight.json')}}
         core.write_new(directory / 'receipt.json', json.dumps(receipt, indent=2))
     except Exception as error:
-        issues = []
-        if switched:
-            try:
-                switch_release(old, release)
-                core.run(['systemctl', 'restart', 'tomasini.service'], label='Restaurar únicamente el código anterior de Tomasini')
-                verify_tomasini()
-            except Exception:
-                issues.append('restauración de código anterior requiere revisión')
+        rolled_back, issues = recover_failure(old, release, switched, quiesced, migration_attempted, timer_was_active, forward_only)
         try:
             verify_preserved(snapshot)
         except Exception:
             issues.append('verificación de aplicaciones/datos/configuración requiere revisión')
         core.write_new(directory / 'failure.json', json.dumps({'phase': phase, 'timestamp': time.time(),
-                       'rolledBackCode': switched and not issues, 'issues': issues,
+                       'rolledBackCode': rolled_back, 'issues': issues,
                        'databaseReset': False, 'detail': type(error).__name__}, indent=2))
         try:
             logs = [json.loads(path.read_text()) for path in sorted(set((BASE / 'private').glob('command-failure-*.json')) - prior_logs)]
@@ -348,6 +555,8 @@ def main():
     parser.add_argument('--plan', required=True)
     parser.add_argument('--plan-sha', required=True)
     parser.add_argument('--core-sha', required=True)
+    parser.add_argument('--resume-preparation', action='store_true',
+                        help='Archivar una preparación de controles interrumpida antes del respaldo y repetirla desde el paquete verificado.')
     args = parser.parse_args()
     try:
         core.require(os.geteuid() == 0, 'Se requiere sudo.')

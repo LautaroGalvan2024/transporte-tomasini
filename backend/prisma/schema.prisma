@@ -71,12 +71,28 @@ model Truck {
   plate             String       @unique @db.VarChar(16)
   label             String       @db.VarChar(120)
   active            Boolean      @default(true)
-  initialOdometer   Int
-  initialOdometerAt DateTime     @db.Timestamptz(3)
+  initialOdometer   Int?
+  initialOdometerAt DateTime?    @db.Timestamptz(3)
   createdAt         DateTime     @default(now()) @db.Timestamptz(3)
   assignedDrivers   Driver[]
   trips             Trip[]
   obligations       Obligation[]
+  assignedTrailer   Trailer?
+  @@schema("tomasini")
+}
+
+model Trailer {
+  id              String       @id @default(uuid()) @db.Uuid
+  plate           String       @unique @db.VarChar(16)
+  label           String       @db.VarChar(120)
+  active          Boolean      @default(true)
+  assignedTruckId String?      @unique @db.Uuid
+  version         Int          @default(1)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+  assignedTruck   Truck?       @relation(fields: [assignedTruckId], references: [id], onDelete: Restrict)
+  trips           Trip[]
+  obligations     Obligation[]
   @@schema("tomasini")
 }
 
@@ -87,12 +103,14 @@ model Trip {
   createdById     String     @db.Uuid
   driverId        String     @db.Uuid
   truckId         String     @db.Uuid
+  trailerId       String?    @db.Uuid
   origin          String     @db.VarChar(180)
   destination     String     @db.VarChar(180)
   departureAt     DateTime   @db.Timestamptz(3)
   arrivalAt       DateTime   @db.Timestamptz(3)
   startKm         Int
   endKm           Int
+  controlCount    Int?
   allowance       Decimal?   @db.Decimal(14, 2)
   notes           String?    @db.VarChar(2000)
   status          TripStatus @default(ACTIVE)
@@ -106,7 +124,9 @@ model Trip {
   updatedAt       DateTime   @updatedAt @db.Timestamptz(3)
   driver          Driver     @relation(fields: [driverId], references: [id])
   truck           Truck      @relation(fields: [truckId], references: [id])
+  trailer         Trailer?   @relation(fields: [trailerId], references: [id], onDelete: Restrict)
   @@index([truckId, arrivalAt])
+  @@index([trailerId, departureAt])
   @@index([driverId, departureAt])
   @@index([status, departureAt])
   @@schema("tomasini")
@@ -118,6 +138,7 @@ model Obligation {
   kind           ObligationKind
   truckId        String?        @db.Uuid
   driverId       String?        @db.Uuid
+  trailerId      String?        @db.Uuid
   dueDate        DateTime?      @db.Date
   dueKm          Int?
   intervalMonths Int?
@@ -131,9 +152,11 @@ model Obligation {
   updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
   truck          Truck?         @relation(fields: [truckId], references: [id])
   driver         Driver?        @relation(fields: [driverId], references: [id])
+  trailer        Trailer?       @relation(fields: [trailerId], references: [id], onDelete: Restrict)
   renewals       Renewal[]
   @@index([truckId, active])
   @@index([driverId, active])
+  @@index([trailerId, active])
   @@schema("tomasini")
 }
 

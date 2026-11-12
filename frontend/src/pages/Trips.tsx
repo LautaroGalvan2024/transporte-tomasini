@@ -27,7 +27,14 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError, send } from "../api";
-import type { Driver, PageProps, Trip, TripList, Truck } from "../types";
+import type {
+  Driver,
+  PageProps,
+  Trailer,
+  Trip,
+  TripList,
+  Truck,
+} from "../types";
 import {
   EmptyState,
   ErrorState,
@@ -44,6 +51,7 @@ import { useDesktopRows } from "../useDesktopRows";
 
 type TripFormValues = {
   truckId: string;
+  trailerId: string;
   driverId: string;
   origin: string;
   destination: string;
@@ -51,11 +59,13 @@ type TripFormValues = {
   arrivalAt: string;
   startKm: string;
   endKm: string;
+  controlCount: string;
   allowance: string;
   notes: string;
 };
 const emptyValues = (): TripFormValues => ({
   truckId: "",
+  trailerId: "",
   driverId: "",
   origin: "",
   destination: "",
@@ -63,6 +73,7 @@ const emptyValues = (): TripFormValues => ({
   arrivalAt: "",
   startKm: "",
   endKm: "",
+  controlCount: "0",
   allowance: "",
   notes: "",
 });
@@ -86,6 +97,11 @@ export function TripForm({
     refresh: refreshTrucks,
   } = useData<{ items: Truck[] }>("/trucks");
   const {
+    data: trailers,
+    error: trailersError,
+    refresh: refreshTrailers,
+  } = useData<{ items: Trailer[] }>("/trailers");
+  const {
     data: drivers,
     error: driversError,
     refresh: refreshDrivers,
@@ -108,6 +124,7 @@ export function TripForm({
     [reloadConfirm, setReloadConfirm] = useState(false),
     [loadRevision, setLoadRevision] = useState(0);
   const [view, setView] = useState<"trip" | "extras">("trip");
+  const [trailerConfirmed, setTrailerConfirmed] = useState(false);
   const baseline = useRef<TripFormValues>(emptyValues());
   const initialized = useRef(false),
     requestId = useRef(crypto.randomUUID()),
@@ -117,6 +134,18 @@ export function TripForm({
     setValues((v) => ({ ...v, [field]: value }));
     setFields((f) => ({ ...f, [field]: "" }));
   };
+  const suggestedTrailer = (truckId: string) =>
+    trailers?.items.find((t) => t.active && t.assignedTruckId === truckId)
+      ?.id || "";
+  const selectTruck = (truckId: string) => {
+    setValues((v) => ({
+      ...v,
+      truckId,
+      ...(!tripId ? { trailerId: suggestedTrailer(truckId) } : {}),
+    }));
+    if (!tripId) setTrailerConfirmed(false);
+    setFields((f) => ({ ...f, truckId: "", trailerId: "" }));
+  };
   useEffect(() => {
     if (!tripId) return;
     let alive = true;
@@ -125,6 +154,7 @@ export function TripForm({
         if (!alive) return;
         const loadedValues = {
           truckId: t.truckId,
+          trailerId: t.trailerId || "",
           driverId: t.driverId,
           origin: t.origin,
           destination: t.destination,
@@ -132,12 +162,14 @@ export function TripForm({
           arrivalAt: localInput(t.arrivalAt),
           startKm: String(t.startKm),
           endKm: String(t.endKm),
+          controlCount: t.controlCount?.toString() ?? "",
           allowance: t.allowance == null ? "" : String(t.allowance),
           notes: t.notes || "",
         };
         baseline.current = loadedValues;
         setValues(loadedValues);
         setVersion(t.version);
+        setTrailerConfirmed(true);
         setExtra(Boolean(t.notes || t.allowance != null));
         initialized.current = true;
       })
@@ -152,7 +184,8 @@ export function TripForm({
     };
   }, [tripId, loadRevision]);
   useEffect(() => {
-    if (tripId || initialized.current || !drivers || !trucks) return;
+    if (tripId || initialized.current || !drivers || !trucks || !trailers)
+      return;
     const driver =
       drivers.items.find((d) => d.userId === user.id && d.active) ||
       (user.role === "DRIVER" ? drivers.items[0] : null);
@@ -161,12 +194,16 @@ export function TripForm({
         ...v,
         driverId: driver?.id || "",
         truckId: driver?.assignedTruckId || "",
+        trailerId:
+          trailers.items.find(
+            (t) => t.active && t.assignedTruckId === driver?.assignedTruckId,
+          )?.id || "",
       };
       baseline.current = initial;
       return initial;
     });
     initialized.current = true;
-  }, [drivers, trucks, user, tripId]);
+  }, [drivers, trucks, trailers, user, tripId]);
   const changed = JSON.stringify(values) !== JSON.stringify(baseline.current);
   const blocked = busy || Boolean(pendingBody);
   useEffect(() => {
@@ -192,11 +229,13 @@ export function TripForm({
       ]),
     ).values(),
   ).slice(0, 4);
-  async function submit(e: FormEvent) {
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (submitting.current) return;
     const invalid: Record<string, string> = {};
     if (!values.truckId) invalid.truckId = "Elegí el camión de este viaje.";
+    if (!trailerConfirmed)
+      invalid.trailerId = "Confirmá el acoplado usado o elegí Sin acoplado.";
     if (user.role === "ADMIN" && !values.driverId)
       invalid.driverId = "Elegí el chofer.";
     if (!values.origin.trim()) invalid.origin = "Ingresá desde dónde saliste.";
@@ -217,6 +256,13 @@ export function TripForm({
       invalid.endKm = "Ingresá los kilómetros que marcaba al llegar.";
     if (km !== null && km < 0)
       invalid.endKm = "El kilometraje final debe ser igual o mayor al inicial.";
+    const controls = e.currentTarget.elements.namedItem(
+      "controlCount",
+    ) as HTMLInputElement;
+    if (!controls.validity.valid)
+      invalid.controlCount = controls.validity.rangeOverflow
+        ? "La cantidad máxima es 2.147.483.647."
+        : "Ingresá una cantidad entera, mayor o igual a 0.";
     if (
       values.allowance !== "" &&
       (!Number.isFinite(Number(values.allowance.replace(",", "."))) ||
@@ -241,12 +287,15 @@ export function TripForm({
     try {
       const body: Record<string, unknown> = pendingBody || {
         ...values,
+        trailerId: values.trailerId || null,
         origin: values.origin.trim(),
         destination: values.destination.trim(),
         departureAt: new Date(`${values.departureAt}:00-03:00`).toISOString(),
         arrivalAt: new Date(`${values.arrivalAt}:00-03:00`).toISOString(),
         startKm: Number(values.startKm),
         endKm: Number(values.endKm),
+        controlCount:
+          values.controlCount === "" ? null : Number(values.controlCount),
         allowance:
           values.allowance === ""
             ? null
@@ -288,14 +337,15 @@ export function TripForm({
       submitting.current = false;
     }
   }
-  if (loading || !trucks || !drivers) {
-    const err = loadError || trucksError || driversError;
+  if (loading || !trucks || !drivers || !trailers) {
+    const err = loadError || trucksError || driversError || trailersError;
     if (err)
       return (
         <ErrorState
           message={err}
           onRetry={() => {
             refreshTrucks();
+            refreshTrailers();
             refreshDrivers();
             onCancel();
           }}
@@ -325,6 +375,7 @@ export function TripForm({
               <TruckIcon size={19} />
               {success.truck.plate}
             </span>
+            <span>{success.trailer?.plate || "Sin acoplado registrado"}</span>
             <span>
               <Gauge size={19} />
               {formatKm(success.distanceKm)} km
@@ -346,11 +397,13 @@ export function TripForm({
                 ...emptyValues(),
                 driverId: v.driverId,
                 truckId: v.truckId,
+                trailerId: suggestedTrailer(v.truckId),
               };
               baseline.current = initial;
               return initial;
             });
             setExtra(false);
+            setTrailerConfirmed(false);
             if (tripId) onDone();
           }}
         >
@@ -413,7 +466,7 @@ export function TripForm({
                       const driver = drivers.items.find(
                         (d) => d.id === e.target.value,
                       );
-                      set("truckId", driver?.assignedTruckId || "");
+                      selectTruck(driver?.assignedTruckId || "");
                     }}
                     disabled={blocked}
                   >
@@ -436,7 +489,7 @@ export function TripForm({
               <Field label="Camión" error={fields.truckId}>
                 <select
                   value={values.truckId}
-                  onChange={(e) => set("truckId", e.target.value)}
+                  onChange={(e) => selectTruck(e.target.value)}
                   disabled={blocked}
                 >
                   <option value="">Elegí un camión</option>
@@ -450,6 +503,37 @@ export function TripForm({
                 </select>
               </Field>
             </div>
+            <Field
+              label="Acoplado de este viaje"
+              error={fields.trailerId}
+              hint="Confirmá el usado en este viaje; puede ser distinto del asignado actualmente."
+            >
+              <select
+                value={trailerConfirmed ? values.trailerId : "__confirm__"}
+                onChange={(e) => {
+                  set("trailerId", e.target.value);
+                  setTrailerConfirmed(true);
+                }}
+                disabled={blocked || !values.truckId}
+              >
+                {!trailerConfirmed && (
+                  <option value="__confirm__" disabled>
+                    {values.trailerId
+                      ? `Sugerido: ${trailers.items.find((t) => t.id === values.trailerId)?.plate || "acoplado asignado"} · confirmar`
+                      : "Elegí el acoplado o Sin acoplado"}
+                  </option>
+                )}
+                <option value="">Sin acoplado</option>
+                {trailers.items
+                  .filter((t) => t.active || t.id === values.trailerId)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.plate} · {t.label}
+                      {!t.active ? " (inactivo)" : ""}
+                    </option>
+                  ))}
+              </select>
+            </Field>
             <div className="grid2">
               <Field label="Salí de" error={fields.origin}>
                 <input
@@ -518,13 +602,25 @@ export function TripForm({
             </div>
           </section>
           <section className="trip-km-block">
-            <h2>Kilómetros</h2>
+            <h2>Kilómetros y controles</h2>
             {truck && (
               <div className="odometer-reference">
                 <Info size={18} />
                 <span>
-                  Última lectura: <strong>{formatKm(truck.odometer)} km</strong>
-                  <small>{formatDate(truck.odometerAt)}</small>
+                  {truck.odometer === null ? (
+                    <>
+                      <strong>Kilometraje pendiente</strong>
+                      <small>
+                        Ingresá la lectura real al salir y al llegar.
+                      </small>
+                    </>
+                  ) : (
+                    <>
+                      Última lectura:{" "}
+                      <strong>{formatKm(truck.odometer)} km</strong>
+                      <small>{formatDate(truck.odometerAt)}</small>
+                    </>
+                  )}
                 </span>
               </div>
             )}
@@ -566,6 +662,21 @@ export function TripForm({
                 <small> km</small>
               </strong>
             </div>
+            <Field label="Controles" error={fields.controlCount}>
+              <input
+                type="number"
+                name="controlCount"
+                inputMode="numeric"
+                min={0}
+                max={2147483647}
+                step={1}
+                required={!tripId || baseline.current.controlCount !== ""}
+                placeholder={baseline.current.controlCount === "" ? "Sin informar" : "0"}
+                value={values.controlCount}
+                onChange={(e) => set("controlCount", e.target.value)}
+                disabled={blocked}
+              />
+            </Field>
           </section>
         </div>
         <button
@@ -711,7 +822,26 @@ type TripAuditEvent = {
   createdAt: string;
   actor?: { name: string } | null;
   reason?: string | null;
+  before?: {
+    trailerId?: string | null;
+    trailer?: { plate: string } | null;
+  } | null;
+  after?: {
+    trailerId?: string | null;
+    trailer?: { plate: string } | null;
+  } | null;
 };
+function trailerHistoryChange(event: TripAuditEvent) {
+  if (!event.after || !("trailerId" in event.after)) return "";
+  const after = event.after.trailer?.plate || "Sin acoplado registrado";
+  if (event.action === "CREATED") return `Acoplado: ${after}`;
+  if (
+    event.action === "UPDATED" &&
+    (event.before?.trailerId ?? null) !== event.after.trailerId
+  )
+    return `Acoplado: ${event.before?.trailer?.plate || "Sin acoplado registrado"} → ${after}`;
+  return "";
+}
 // Every character remains available: pages split at whitespace without trimming.
 function paginateDetailText(
   text: string,
@@ -831,6 +961,7 @@ export function TripsPage({
   const [from, setFrom] = useState(""),
     [to, setTo] = useState(""),
     [truckId, setTruckId] = useState(""),
+    [trailerId, setTrailerId] = useState(""),
     [driverId, setDriverId] = useState(""),
     [reviewed, setReviewed] = useState(""),
     [page, setPage] = useState(1),
@@ -856,6 +987,7 @@ export function TripsPage({
     ...(from ? { from } : {}),
     ...(to ? { to } : {}),
     ...(truckId ? { truckId } : {}),
+    ...(trailerId ? { trailerId } : {}),
     ...(driverId ? { driverId } : {}),
     ...(reviewed ? { reviewed } : {}),
   });
@@ -863,8 +995,11 @@ export function TripsPage({
       `/trips?${query}`,
     ),
     { data: trucks } = useData<{ items: Truck[] }>("/trucks"),
+    { data: trailers } = useData<{ items: Trailer[] }>("/trailers"),
     { data: drivers } = useData<{ items: Driver[] }>("/drivers");
-  const activeFilters = Boolean(from || to || truckId || driverId || reviewed);
+  const activeFilters = Boolean(
+    from || to || truckId || trailerId || driverId || reviewed,
+  );
   function filter(fn: (s: string) => void, v: string) {
     fn(v);
     setPage(1);
@@ -995,6 +1130,19 @@ export function TripsPage({
                 ))}
               </select>
             </Field>
+            <Field label="Acoplado">
+              <select
+                value={trailerId}
+                onChange={(e) => filter(setTrailerId, e.target.value)}
+              >
+                <option value="">Todos los acoplados</option>
+                {trailers?.items.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.plate}
+                  </option>
+                ))}
+              </select>
+            </Field>
             {user.role === "ADMIN" && (
               <Field label="Chofer">
                 <select
@@ -1027,6 +1175,7 @@ export function TripsPage({
                   setFrom("");
                   setTo("");
                   setTruckId("");
+                  setTrailerId("");
                   setDriverId("");
                   setReviewed("");
                   setPage(1);
@@ -1065,7 +1214,7 @@ export function TripsPage({
                     <th>Recorrido</th>
                     <th>Salida</th>
                     <th>
-                      {user.role === "ADMIN" ? "Chofer / Camión" : "Camión"}
+                      {user.role === "ADMIN" ? "Chofer / Unidades" : "Unidades"}
                     </th>
                     <th>Kilómetros</th>
                     <th>Estado</th>
@@ -1106,6 +1255,11 @@ export function TripsPage({
                           </strong>
                         )}
                         <span className="plate-small">{t.truck.plate}</span>
+                        <small className="cell-subtitle">
+                          {t.trailer
+                            ? `Acoplado ${t.trailer.plate}`
+                            : "Sin acoplado registrado"}
+                        </small>
                       </td>
                       <td>
                         <strong className="table-km">
@@ -1162,6 +1316,11 @@ export function TripsPage({
                       <ChevronRight size={17} />
                     </strong>
                   </div>
+                  <small className="trip-mobile-trailer">
+                    {t.trailer
+                      ? `Acoplado ${t.trailer.plate}`
+                      : "Sin acoplado registrado"}
+                  </small>
                 </button>
               ))}
             </div>
@@ -1294,6 +1453,15 @@ export function TripsPage({
                       </dd>
                     </div>
                     <div>
+                      <dt>Acoplado</dt>
+                      <dd>
+                        {detail.trailer?.plate || "Sin acoplado registrado"}
+                        {detail.trailer && (
+                          <small>{detail.trailer.label}</small>
+                        )}
+                      </dd>
+                    </div>
+                    <div>
                       <dt>Viáticos</dt>
                       <dd>{formatMoney(detail.allowance)}</dd>
                     </div>
@@ -1304,6 +1472,10 @@ export function TripsPage({
                     <div>
                       <dt>Odómetro al llegar</dt>
                       <dd>{formatKm(detail.endKm)} km</dd>
+                    </div>
+                    <div>
+                      <dt>Controles</dt>
+                      <dd>{detail.controlCount ?? "Sin informar"}</dd>
                     </div>
                     <div>
                       <dt>Registrado</dt>
@@ -1366,6 +1538,11 @@ export function TripsPage({
                                     ? ` · ${event.actor.name}`
                                     : ""}
                                 </small>
+                                {part === 1 && trailerHistoryChange(event) && (
+                                  <p className="trip-detail-long-text">
+                                    {trailerHistoryChange(event)}
+                                  </p>
+                                )}
                                 {reason && (
                                   <>
                                     <p className="trip-detail-long-text">

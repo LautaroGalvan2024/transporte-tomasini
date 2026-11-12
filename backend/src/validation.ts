@@ -52,23 +52,26 @@ export const tripFields = z
   .object({
     driverId: uuid.optional(),
     truckId: uuid,
+    trailerId: uuid.nullable().optional(),
     origin: text(),
     destination: text(),
     departureAt: instant,
     arrivalAt: instant,
     startKm: km,
     endKm: km,
+    controlCount: z
+      .int32("Ingresá una cantidad entera de controles.")
+      .nonnegative("La cantidad de controles no puede ser negativa.")
+      .nullish(),
     allowance: money.nullable().optional(),
     notes,
   })
   .strict();
 export const tripCreate = tripFields.extend({ clientRequestId: uuid });
-export const tripUpdate = tripFields
-  .partial()
-  .extend({
-    version: z.number().int().positive(),
-    clientRequestId: uuid.optional(),
-  });
+export const tripUpdate = tripFields.partial().extend({
+  version: z.number().int().positive(),
+  clientRequestId: uuid.optional(),
+});
 export const versionBody = z
   .object({ version: z.number().int().positive() })
   .strict();
@@ -82,6 +85,7 @@ export const obligationFields = z
     kind: z.enum(["SERVICE", "DOCUMENT"]),
     truckId: uuid.nullable().optional(),
     driverId: uuid.nullable().optional(),
+    trailerId: uuid.nullable().optional(),
     dueDate: day.nullable().optional(),
     dueKm: km.nullable().optional(),
     intervalMonths: z.number().int().min(1).max(120).nullable().optional(),
@@ -97,31 +101,59 @@ export const obligationFields = z
 export const obligationCreate = obligationFields.extend({
   initialRecord: initialRecord.optional(),
 });
-export const obligationUpdate = obligationFields
-  .partial()
-  .extend({
-    version: z.number().int().positive(),
-    active: z.boolean().optional(),
-  });
+export const obligationUpdate = obligationFields.partial().extend({
+  version: z.number().int().positive(),
+  active: z.boolean().optional(),
+});
 export const renewalBody = initialRecord.extend({
   nextDueDate: day.nullable().optional(),
   nextDueKm: km.nullable().optional(),
   version: z.number().int().positive(),
 });
-export const truckCreate = z
+export const plate = text(16)
+  .transform((s) => s.toUpperCase().replace(/[ -]/g, ""))
+  .refine((s) => /^[A-Z0-9]{4,12}$/.test(s), "Patente inválida.");
+const truckFields = z
   .object({
-    plate: text(16)
-      .transform((s) => s.toUpperCase().replace(/[ -]/g, ""))
-      .refine((s) => /^[A-Z0-9]{4,12}$/.test(s), "Patente inválida."),
+    plate,
     label: text(120),
-    initialOdometer: km,
-    initialOdometerAt: instant,
+    initialOdometer: km.nullable().optional(),
+    initialOdometerAt: instant.nullable().optional(),
   })
   .strict();
-export const truckUpdate = truckCreate
+export const truckCreate = truckFields.refine(
+  (value) =>
+    (value.initialOdometer == null) === (value.initialOdometerAt == null),
+  {
+    message:
+      "Ingresá el kilometraje y la fecha de lectura juntos, o dejá ambos sin informar.",
+    path: ["initialOdometerAt"],
+  },
+);
+export const truckUpdate = truckFields
   .pick({ plate: true, label: true })
   .partial()
   .extend({ active: z.boolean().optional() });
+export const trailerCreate = z
+  .object({
+    plate,
+    label: text(120),
+    assignedTruckId: uuid.nullable().optional(),
+  })
+  .strict();
+export const trailerUpdate = trailerCreate
+  .pick({ plate: true, label: true })
+  .partial()
+  .extend({
+    version: z.number().int().positive(),
+    active: z.boolean().optional(),
+  });
+export const trailerAssignment = z
+  .object({
+    version: z.number().int().positive(),
+    assignedTruckId: uuid.nullable(),
+  })
+  .strict();
 export const driverCreate = z
   .object({
     name: text(120),
@@ -147,6 +179,7 @@ export const tripQuery = z.object({
   to: day.optional(),
   driverId: uuid.optional(),
   truckId: uuid.optional(),
+  trailerId: uuid.optional(),
   reviewed: z.enum(["yes", "no"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),

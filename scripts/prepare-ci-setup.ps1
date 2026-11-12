@@ -12,7 +12,7 @@ $publicKey = Get-Content -LiteralPath $keyPath -Raw
 if ($publicKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,3}(?: [^\r\n]*)?\r?\n?$') { throw 'El archivo no contiene una clave pública Ed25519 válida; no se transfiere.' }
 $files = [ordered]@{}
 $sources = [ordered]@{}
-foreach ($name in @('setup_ci.py','ci_deploy.py','install_vps.py','update_vps.py')) {
+foreach ($name in @('setup_ci.py','ci_deploy.py','ci_migrations.py','install_vps.py','update_vps.py')) {
   $path = Join-Path $root ('infra\' + $name)
   $files[$name] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
   $sources[$name] = $path
