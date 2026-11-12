@@ -177,12 +177,21 @@ test(
         arrivalAt: date(2, 4),
         startKm: 1100,
         endKm: 1300,
+        controlCount: 0,
         allowance: "1250.50",
         notes: "Prueba",
       };
       await t.test(
         "guardado idempotente concurrente, hash de payload y sumas completas",
         async () => {
+          for (const controlCount of [-1, 1.5, "2", 2_147_483_648]) {
+            const invalid = await post(driverAgent, "/trips", {
+              ...baseTrip,
+              controlCount,
+            });
+            assert.equal(invalid.status, 400);
+            assert.ok(invalid.body.error.fields.controlCount);
+          }
           const [a, b] = await Promise.all([
             post(driverAgent, "/trips", baseTrip),
             post(driverAgent, "/trips", baseTrip),
@@ -190,6 +199,7 @@ test(
           assert.ok([200, 201].includes(a.status), JSON.stringify(a.body));
           assert.ok([200, 201].includes(b.status), JSON.stringify(b.body));
           assert.equal(a.body.id, b.body.id);
+          assert.equal(a.body.controlCount, 0);
           tripId = a.body.id;
           version = a.body.version;
           assert.equal(
@@ -205,10 +215,18 @@ test(
           );
           const replay = await post(otherAgent, "/trips", { ...baseTrip });
           assert.equal(replay.status, 409);
+          for (const controlCount of [null, 1]) {
+            const changed = await post(driverAgent, "/trips", {
+              ...baseTrip,
+              controlCount,
+            });
+            assert.equal(changed.body.error.code, "IDEMPOTENCY_CONFLICT");
+          }
           const list = await adminAgent.get(
             `/api/trips?driverId=${first.driver!.id}&pageSize=1`,
           );
           assert.equal(list.body.totals.distanceKm, 200);
+          assert.equal(list.body.items[0].controlCount, 0);
           assert.equal(list.body.totals.allowance, "1250.50");
           assert.equal(
             (await otherAgent.get(`/api/trips/${tripId}`)).status,
@@ -230,9 +248,11 @@ test(
             arrivalAt: date(-2, 3),
             startKm: 900,
             endKm: 950,
+            controlCount: undefined,
             allowance: null,
           });
           assert.equal(old.status, 201, JSON.stringify(old.body));
+          assert.equal(old.body.controlCount, null);
           const conflict = await post(driverAgent, "/trips", {
             ...baseTrip,
             clientRequestId: randomUUID(),
@@ -251,8 +271,10 @@ test(
             endKm: 1200,
           });
           assert.equal(overlap.status, 409);
-          const temporary = await post(driverAgent, "/trips", {
+          const temporary = await post(adminAgent, "/trips", {
             ...baseTrip,
+            driverId: first.driver!.id,
+            controlCount: 3,
             clientRequestId: randomUUID(),
             truckId: secondTruck.id,
             departureAt: date(3),
@@ -261,6 +283,7 @@ test(
             endKm: 5150,
           });
           assert.equal(temporary.status, 201);
+          assert.equal(temporary.body.controlCount, 3);
           await patch(adminAgent, `/drivers/${first.driver!.id}`, {
             assignedTruckId: secondTruck.id,
           });
@@ -288,6 +311,7 @@ test(
             (
               await patch(driverAgent, `/trips/${tripId}`, {
                 notes: "No autorizado",
+                controlCount: 5,
                 version,
               })
             ).status,
@@ -300,13 +324,20 @@ test(
           assert.equal(stale.status, 409);
           const corrected = await patch(adminAgent, `/trips/${tripId}`, {
             endKm: 1320,
+            controlCount: 2,
             notes: "Corregido",
             version,
           });
           assert.equal(corrected.status, 200, JSON.stringify(corrected.body));
           assert.equal(corrected.body.reviewedAt, null);
+          assert.equal(corrected.body.controlCount, 2);
           version = corrected.body.version;
           const history = await adminAgent.get(`/api/trips/${tripId}/history`);
+          const correction = history.body.items.find(
+            (entry: { action: string }) => entry.action === "UPDATED",
+          );
+          assert.equal(correction.before.controlCount, 0);
+          assert.equal(correction.after.controlCount, 2);
           assert.ok(history.body.items.length >= 3);
           assert.ok(
             history.body.items.every(
@@ -434,14 +465,28 @@ test(
             (await driverAgent.get("/api/trips/export")).status,
             403,
           );
-          const response = await adminAgent
-            .get(`/api/trips/export?driverId=${first.driver!.id}`)
+          const exportTrips = (query: string) => adminAgent
+            .get(`/api/trips/export?driverId=${first.driver!.id}&${query}`)
             .buffer(true)
             .parse((res, done) => {
               const parts: Buffer[] = [];
               res.on("data", (d) => parts.push(Buffer.from(d)));
               res.on("end", () => done(null, Buffer.concat(parts)));
             });
+          const form = await exportTrips(`truckId=${secondTruck.id}`);
+          assert.equal(form.status, 200);
+          assert.match(form.headers["content-disposition"], /planilla-kilometraje-tomasini\.xlsx/);
+          const formFiles = unzipSync(form.body);
+          const formSheet = strFromU8(formFiles["xl/worksheets/sheet1.xml"]);
+          const strings = strFromU8(formFiles["xl/sharedStrings.xml"]);
+          assert.match(strings, /CONVENCIÓN COLECTIVA/);
+          assert.ok(strings.includes(secondTruck.plate));
+          assert.ok(!strings.includes(truck.plate));
+          assert.doesNotMatch(strings, /Viáticos ARS|Observaciones|Acoplado/);
+          assert.match(formSheet, /<c r="G5"[^>]*><v>150<\/v>/);
+          assert.match(formSheet, /<c r="J5"[^>]*><v>3<\/v>/);
+          assert.match(formSheet, /<c r="C5"[^>]* t="s">/);
+          const response = await exportTrips("format=detail");
           assert.equal(response.status, 200);
           const files = unzipSync(response.body);
           const sheet = strFromU8(files["xl/worksheets/sheet1.xml"]);

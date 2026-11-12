@@ -50,6 +50,9 @@ export function calculateStatus(
     obligation.dueKm !== null && odometer !== null
       ? obligation.dueKm - odometer
       : null;
+  const odometerMissing =
+    odometer === null &&
+    (obligation.dueKm !== null || obligation.intervalKm != null);
   const status =
     (daysRemaining !== null && daysRemaining <= 0) ||
     (kmRemaining !== null && kmRemaining <= 0)
@@ -57,13 +60,14 @@ export function calculateStatus(
       : (daysRemaining !== null && daysRemaining <= obligation.warningDays) ||
           (kmRemaining !== null && kmRemaining <= obligation.warningKm)
         ? "UPCOMING"
-        : (daysRemaining === null && kmRemaining === null) ||
+        : odometerMissing ||
+            (daysRemaining === null && kmRemaining === null) ||
             (obligation.intervalMonths != null &&
               obligation.dueDate === null) ||
             (obligation.intervalKm != null && obligation.dueKm === null)
           ? "UNCONFIGURED"
           : "OK";
-  return { status, daysRemaining, kmRemaining } as const;
+  return { status, daysRemaining, kmRemaining, odometerMissing } as const;
 }
 export interface Reading {
   at: Date;

@@ -95,6 +95,11 @@ export async function lockTrucks(tx: Tx, ids: string[]) {
     await tx.$queryRaw`SELECT id FROM tomasini."Truck" WHERE id = ${id}::uuid FOR UPDATE`;
 }
 
+export async function lockTrailers(tx: Tx, ids: string[]) {
+  for (const id of [...new Set(ids)].sort())
+    await tx.$queryRaw`SELECT id FROM tomasini."Trailer" WHERE id = ${id}::uuid FOR UPDATE`;
+}
+
 export async function disconnect() {
   if (client) {
     await client.$disconnect();

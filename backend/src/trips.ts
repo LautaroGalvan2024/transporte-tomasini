@@ -23,6 +23,12 @@ import {
   activeTruck,
 } from "./models.js";
 import writeXlsxFile from "write-excel-file/node";
+import { mileageReport } from "./mileage-report.js";
+import {
+  activeTrailer,
+  lockTrailers,
+  validateTrailerOverlap,
+} from "./trailer-models.js";
 
 function tripWhere(req: Request) {
   const input = tripQuery.parse(
@@ -50,6 +56,7 @@ function tripWhere(req: Request) {
         ? { driverId: input.driverId }
         : {}),
     ...(input.truckId ? { truckId: input.truckId } : {}),
+    ...(input.trailerId ? { trailerId: input.trailerId } : {}),
     ...(input.reviewed
       ? { reviewedAt: input.reviewed === "yes" ? { not: null } : null }
       : {}),
@@ -102,22 +109,50 @@ export function tripsRouter() {
   });
   router.get("/export", requireAdmin, async (req, res) => {
     const { where } = tripWhere(req);
-    const count = await getDb().trip.count({ where });
+    const format = req.query.format ?? "form";
     ensure(
-      count <= 50_000,
+      format === "form" || format === "detail",
       400,
-      "Acotá las fechas para exportar hasta 50.000 viajes.",
+      "Formato de reporte inválido.",
     );
     const rows = await getDb().trip.findMany({
       where,
-      include: tripInclude,
+      select: {
+        driverId: true,
+        truckId: true,
+        origin: true,
+        destination: true,
+        departureAt: true,
+        arrivalAt: true,
+        startKm: true,
+        endKm: true,
+        controlCount: true,
+        driver: { select: { user: { select: { name: true } } } },
+        truck: { select: { plate: true } },
+        trailer: { select: { plate: true } },
+        allowance: true,
+        reviewedAt: true,
+        notes: true,
+      },
       orderBy: [{ departureAt: "asc" }, { id: "asc" }],
+      take: 50_001,
     });
+    ensure(
+      rows.length <= 50_000,
+      400,
+      "Acotá las fechas para exportar hasta 50.000 viajes.",
+    );
+    if (format === "form") {
+      const buffer = await mileageReport(rows);
+      res.attachment("planilla-kilometraje-tomasini.xlsx").send(buffer);
+      return;
+    }
     const headers = [
       "Salida (Argentina)",
       "Llegada (Argentina)",
       "Chofer",
       "Camión",
+      "Acoplado",
       "Origen",
       "Destino",
       "Km inicial",
@@ -126,6 +161,7 @@ export function tripsRouter() {
       "Viáticos ARS",
       "Estado revisión",
       "Observaciones",
+      "Controles",
     ];
     const displayTime = (date: Date) =>
       new Intl.DateTimeFormat("es-AR", {
@@ -146,6 +182,7 @@ export function tripsRouter() {
           displayTime(row.arrivalAt),
           row.driver.user.name,
           row.truck.plate,
+          row.trailer?.plate ?? "Sin acoplado registrado",
           row.origin,
           row.destination,
           row.startKm,
@@ -154,11 +191,12 @@ export function tripsRouter() {
           row.allowance === null ? null : Number(row.allowance),
           row.reviewedAt ? "Revisado" : "Pendiente",
           row.notes,
+          row.controlCount,
         ].map((value, i) =>
           value === null
             ? null
             : typeof value === "number"
-              ? { value, type: Number, format: i === 9 ? "#,##0.00" : "#,##0" }
+              ? { value, type: Number, format: i === 10 ? "#,##0.00" : "#,##0" }
               : { value, type: String },
         ),
       ),
@@ -166,7 +204,7 @@ export function tripsRouter() {
     const buffer = await writeXlsxFile(data, {
       sheet: "Viajes",
       columns: headers.map((_, i) => ({
-        width: [0, 1, 2, 4, 5, 11].includes(i) ? 26 : 18,
+        width: [0, 1, 2, 4, 5, 6, 12].includes(i) ? 26 : 18,
       })),
     }).toBuffer();
     res.setHeader(
@@ -208,6 +246,7 @@ export function tripsRouter() {
     const data = {
       ...body,
       driverId,
+      trailerId: input.trailerId ?? null,
       departureAt: new Date(input.departureAt),
       arrivalAt: new Date(input.arrivalAt),
       allowance: input.allowance ?? null,
@@ -227,6 +266,12 @@ export function tripsRouter() {
           endKm: data.endKm,
           allowance: data.allowance,
           notes: data.notes,
+          // Null/omitted keeps the pre-trailer hash, including property order.
+          ...(data.trailerId ? { trailerId: data.trailerId } : {}),
+          // Preserve older retries without a count, but hash an explicitly reported zero.
+          ...(data.controlCount != null
+            ? { controlCount: data.controlCount }
+            : {}),
         }),
       )
       .digest("hex");
@@ -247,7 +292,17 @@ export function tripsRouter() {
         return { trip: existing, replay: true };
       }
       await lockTrucks(tx, [data.truckId]);
+      await lockTrailers(tx, data.trailerId ? [data.trailerId] : []);
       await activeTruck(tx, data.truckId);
+      if (data.trailerId) {
+        await activeTrailer(tx, data.trailerId);
+        await validateTrailerOverlap(
+          tx,
+          data.trailerId,
+          data.departureAt,
+          data.arrivalAt,
+        );
+      }
       await activeDriver(tx, driverId);
       await validateDriverOverlap(
         tx,
@@ -322,6 +377,8 @@ export function tripsRouter() {
         ...fields,
         driverId: input.driverId ?? old.driverId,
         truckId: input.truckId ?? old.truckId,
+        trailerId:
+          input.trailerId === undefined ? old.trailerId : input.trailerId,
         departureAt: input.departureAt
           ? new Date(input.departureAt)
           : old.departureAt,
@@ -331,7 +388,24 @@ export function tripsRouter() {
       };
       validateTripDates(data);
       await lockTrucks(tx, [old.truckId, data.truckId]);
+      await lockTrailers(
+        tx,
+        [old.trailerId, data.trailerId].filter(
+          (id): id is string => id !== null,
+        ),
+      );
       if (data.truckId !== old.truckId) await activeTruck(tx, data.truckId);
+      if (data.trailerId) {
+        if (data.trailerId !== old.trailerId)
+          await activeTrailer(tx, data.trailerId);
+        await validateTrailerOverlap(
+          tx,
+          data.trailerId,
+          data.departureAt,
+          data.arrivalAt,
+          id,
+        );
+      }
       if (data.driverId !== old.driverId) await activeDriver(tx, data.driverId);
       await validateDriverOverlap(
         tx,
@@ -419,6 +493,7 @@ export function tripsRouter() {
         "VERSION_CONFLICT",
       );
       await lockTrucks(tx, [old.truckId]);
+      await lockTrailers(tx, old.trailerId ? [old.trailerId] : []);
       const trip = await tx.trip.update({
         where: { id, version: input.version },
         data: {

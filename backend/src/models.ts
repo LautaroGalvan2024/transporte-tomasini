@@ -3,6 +3,8 @@ import { getDb, type Tx } from "./db.js";
 import type { AuthUser } from "./auth.js";
 import { calculateStatus, dateOnly, type Reading } from "./domain.js";
 import { ensure } from "./errors.js";
+import { trailerDtos } from "./trailer-models.js";
+export { activeTrailer, validateTrailerOverlap } from "./trailer-models.js";
 import {
   adjustmentReading,
   odometerAdjustments,
@@ -13,6 +15,7 @@ import {
 export const tripInclude = {
   driver: { include: { user: true } },
   truck: true,
+  trailer: true,
 } satisfies Prisma.TripInclude;
 type TripRow = Prisma.TripGetPayload<{ include: typeof tripInclude }>;
 export function tripDto(row: TripRow) {
@@ -20,6 +23,7 @@ export function tripDto(row: TripRow) {
     id: row.id,
     driverId: row.driverId,
     truckId: row.truckId,
+    trailerId: row.trailerId,
     origin: row.origin,
     destination: row.destination,
     departureAt: row.departureAt.toISOString(),
@@ -27,6 +31,7 @@ export function tripDto(row: TripRow) {
     startKm: row.startKm,
     endKm: row.endKm,
     distanceKm: row.endKm - row.startKm,
+    controlCount: row.controlCount,
     allowance: row.allowance?.toFixed(2) ?? null,
     notes: row.notes,
     status: row.status,
@@ -35,6 +40,13 @@ export function tripDto(row: TripRow) {
     version: row.version,
     driver: { id: row.driver.id, name: row.driver.user.name },
     truck: { id: row.truck.id, plate: row.truck.plate, label: row.truck.label },
+    trailer: row.trailer
+      ? {
+          id: row.trailer.id,
+          plate: row.trailer.plate,
+          label: row.trailer.label,
+        }
+      : null,
   };
 }
 
@@ -77,7 +89,9 @@ export async function truckDtos(db: Tx = getDb(), truckId?: string) {
       latestAdjustment.set(row.entityId, adjustmentReading(row.after));
   return rows.map((row) => {
     const readings = [
-      { at: row.initialOdometerAt, km: row.initialOdometer },
+      ...(row.initialOdometer !== null && row.initialOdometerAt !== null
+        ? [{ at: row.initialOdometerAt, km: row.initialOdometer }]
+        : []),
       ...row.trips.map((t) => ({ at: t.arrivalAt, km: t.endKm })),
       ...row.obligations.flatMap((o) =>
         o.renewals.map((r) => ({ at: r.performedAt, km: r.odometer! })),
@@ -91,9 +105,9 @@ export async function truckDtos(db: Tx = getDb(), truckId?: string) {
       label: row.label,
       active: row.active,
       initialOdometer: row.initialOdometer,
-      initialOdometerAt: row.initialOdometerAt.toISOString(),
-      odometer: readings[0].km,
-      odometerAt: readings[0].at.toISOString(),
+      initialOdometerAt: row.initialOdometerAt?.toISOString() ?? null,
+      odometer: readings[0]?.km ?? null,
+      odometerAt: readings[0]?.at.toISOString() ?? null,
     };
   });
 }
@@ -138,13 +152,21 @@ export async function obligationDtos(
                 user.driver?.id ?? "00000000-0000-0000-0000-000000000000",
             },
             ...(user.driver?.assignedTruckId
-              ? [{ truckId: user.driver.assignedTruckId }]
+              ? [
+                  { truckId: user.driver.assignedTruckId },
+                  {
+                    trailer: {
+                      active: true,
+                      assignedTruckId: user.driver.assignedTruckId,
+                    },
+                  },
+                ]
               : []),
           ],
           active: true,
         }
       : {};
-  const [rows, trucks] = await Promise.all([
+  const [rows, trucks, trailers] = await Promise.all([
     db.obligation.findMany({
       where,
       include: {
@@ -154,16 +176,22 @@ export async function obligationDtos(
       orderBy: { title: "asc" },
     }),
     truckDtos(db),
+    trailerDtos(db),
   ]);
   const truckMap = new Map(trucks.map((t) => [t.id, t]));
+  const trailerMap = new Map(trailers.map((t) => [t.id, t]));
   return rows.map((row) => {
     const truck = row.truckId ? (truckMap.get(row.truckId) ?? null) : null;
+    const trailer = row.trailerId
+      ? (trailerMap.get(row.trailerId) ?? null)
+      : null;
     return {
       id: row.id,
       title: row.title,
       kind: row.kind,
       truckId: row.truckId,
       driverId: row.driverId,
+      trailerId: row.trailerId,
       dueDate: dateOnly(row.dueDate),
       dueKm: row.dueKm,
       intervalMonths: row.intervalMonths,
@@ -174,10 +202,13 @@ export async function obligationDtos(
       active: row.active,
       ownerActive: row.truckId
         ? truck?.active === true
-        : row.driver?.user.active === true,
+        : row.trailerId
+          ? trailer?.active === true
+          : row.driver?.user.active === true,
       version: row.version,
       ...calculateStatus(row, truck?.odometer ?? null, now),
       truck,
+      trailer,
       driver: row.driver
         ? { id: row.driver.id, name: row.driver.user.name }
         : null,
@@ -226,11 +257,15 @@ export async function validateTruckHistory(
     );
   }
   const readings: Reading[] = [
-    {
-      at: truck.initialOdometerAt,
-      km: truck.initialOdometer,
-      label: "lectura inicial",
-    },
+    ...(truck.initialOdometer !== null && truck.initialOdometerAt !== null
+      ? [
+          {
+            at: truck.initialOdometerAt,
+            km: truck.initialOdometer,
+            label: "lectura inicial",
+          },
+        ]
+      : []),
     ...[...trips, ...(candidate ? [candidate] : [])].flatMap((t) => [
       { at: t.departureAt, km: t.startKm, label: "salida de un viaje" },
       { at: t.arrivalAt, km: t.endKm, label: "llegada de un viaje" },

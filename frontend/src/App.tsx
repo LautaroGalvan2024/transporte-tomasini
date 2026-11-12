@@ -60,7 +60,7 @@ import { JoinPage } from "./pages/Join";
 const destinations = [
   { id: "home", label: "Inicio", Icon: House },
   { id: "trips", label: "Viajes", Icon: Route },
-  { id: "fleet", label: "Camiones", Icon: TruckIcon },
+  { id: "fleet", label: "Flota", Icon: TruckIcon },
   { id: "drivers", label: "Equipo", Icon: Users },
   { id: "users", label: "Usuarios", Icon: ShieldCheck },
   { id: "obligations", label: "Vencimientos", Icon: CalendarDays },
@@ -675,8 +675,14 @@ function DriverHome(props: PageProps) {
               <span>{truck.label}</span>
             </div>
             <div className="vehicle-reading">
-              <strong>{formatKm(truck.odometer)} km</strong>
-              <span>Última lectura · {formatDate(truck.odometerAt)}</span>
+              <strong>
+                {truck.odometer === null
+                  ? "Sin informar"
+                  : `${formatKm(truck.odometer)} km`}
+              </strong>
+              {truck.odometerAt && (
+                <span>Última lectura · {formatDate(truck.odometerAt)}</span>
+              )}
             </div>
           </>
         ) : (
@@ -722,6 +728,7 @@ function DriverHome(props: PageProps) {
                     </strong>
                     <small>
                       {formatDate(t.departureAt)} · {t.truck.plate}
+                      {t.trailer ? ` · Acoplado ${t.trailer.plate}` : ""}
                     </small>
                   </span>
                   <span className="recent-trip-km">
@@ -748,6 +755,8 @@ function DriverHome(props: PageProps) {
               <div className="control-line" key={o.id}>
                 <StatusBadge status={o.status} />
                 <strong>{o.title}</strong>
+                {o.trailer && <small>Acoplado · {o.trailer.plate}</small>}
+                {o.odometerMissing && <small>Falta informar kilometraje</small>}
                 <span>
                   {o.dueDate
                     ? formatDate(o.dueDate)

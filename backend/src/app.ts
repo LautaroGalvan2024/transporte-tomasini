@@ -18,6 +18,7 @@ import { dashboardRouter } from "./dashboard.js";
 import { errorHandler } from "./errors.js";
 import { invitationsRouter, publicInvitationsRouter } from "./invitations.js";
 import { usersRouter } from "./users.js";
+import { trailersRouter } from "./trailers.js";
 
 export function createApp() {
   const cfg = getConfig(),
@@ -68,6 +69,7 @@ export function createApp() {
   app.use("/api/invitations", invitationsRouter());
   app.use("/api/users", usersRouter());
   app.use("/api/trucks", trucksRouter());
+  app.use("/api/trailers", trailersRouter());
   app.use("/api/drivers", driversRouter());
   app.use("/api/trips", tripsRouter());
   app.use("/api/obligations", obligationsRouter());

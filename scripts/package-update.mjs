@@ -21,15 +21,30 @@ for (const file of priorMigrations) {
 }
 const priorNames = new Set(priorMigrations.map(file => migrationPattern.exec(file.path)[1]));
 const pendingMigrations = migrations.filter(item => !priorNames.has(item.name)).map(item => item.name);
-if (JSON.stringify(pendingMigrations) !== JSON.stringify(['202611020002_invitations'])) throw new Error('Este plan está limitado a la migración aditiva de invitaciones revisada.');
+const invitationsMigration = '202611020002_invitations';
+const fleetMigration = '202611040001_trailers_optional_odometer';
+const controlsMigration = '202611110001_trip_control_count';
+if (pendingMigrations.length !== 1 || ![invitationsMigration, fleetMigration, controlsMigration].includes(pendingMigrations[0])) {
+  throw new Error('Se admite una sola migración pendiente revisada de invitaciones, flota o controles.');
+}
+const fleet = pendingMigrations[0] === fleetMigration;
+if (pendingMigrations[0] === controlsMigration) {
+  const expectedHistory = ['202611020001_initial', invitationsMigration, fleetMigration, controlsMigration];
+  if (JSON.stringify(migrations.map(item => item.name)) !== JSON.stringify(expectedHistory) ||
+      migrations.at(-1).sha256 !== '23cf06652284267907692f723b7b175a817ac3557063257395b018c3b96e58d8') {
+    throw new Error('Controles requiere el historial de flota y el SQL exacto revisado.');
+  }
+}
 const plan = { version: 1, releaseSha256: manifest.sha256, previousReleaseSha256: previous.sha256,
-  migrationPolicy: 'additive', backwardCompatible: true, migrations, pendingMigrations,
+  migrationPolicy: 'additive', backwardCompatible: !fleet, migrations, pendingMigrations,
+  ...(fleet ? { writePolicy: 'quiesce-tomasini', recoveryPolicy: 'forward-only' } : {}),
   schemaSha256: manifest.files.find(file => file.path === 'backend/prisma/schema.prisma').sha256 };
 const planPath = output.archive + '.update-plan.json';
 const planBytes = JSON.stringify(plan, null, 2) + '\n';
 writeFileSync(planPath, planBytes, { flag: 'wx' });
 const hash = data => createHash('sha256').update(data).digest('hex');
 const updateManifest = { ...manifest, mode: 'update', previousReleaseSha256: previous.sha256,
+  ...(fleet ? { recoveryPolicy: 'forward-only' } : {}),
   planPath, planSha256: hash(planBytes), updaterSha256: hash(readFileSync(join(root, 'infra/update_vps.py'))),
   coreSha256: hash(readFileSync(join(root, 'infra/install_vps.py'))) };
 const updateManifestPath = output.archive + '.update.json';

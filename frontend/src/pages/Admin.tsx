@@ -40,6 +40,7 @@ import type {
   Settings,
   TripList,
   Truck,
+  Trailer,
   UserAccess,
   Role,
 } from "../types";
@@ -53,6 +54,7 @@ import {
   formatMoney,
 } from "../ui";
 import "../admin.css";
+import { TrailersPanel } from "./Trailers";
 
 const TIMEZONE = "America/Argentina/Buenos_Aires";
 const dateToday = () =>
@@ -314,8 +316,16 @@ function FormFooter({
 function OwnerLabel({ obligation }: { obligation: Obligation }) {
   return (
     <span className="admin-owner">
-      {obligation.truckId ? <TruckIcon size={15} /> : <UserRound size={15} />}
-      {obligation.truck?.plate || obligation.driver?.name || "Sin asignación"}
+      {obligation.truckId || obligation.trailerId ? (
+        <TruckIcon size={15} />
+      ) : (
+        <UserRound size={15} />
+      )}
+      {obligation.trailerId ? "Acoplado · " : ""}
+      {obligation.truck?.plate ||
+        obligation.trailer?.plate ||
+        obligation.driver?.name ||
+        "Sin asignación"}
     </span>
   );
 }
@@ -337,6 +347,7 @@ function DueSummary({ obligation }: { obligation: Obligation }) {
       {!obligation.dueDate && obligation.dueKm === null && (
         <span>Próximo límite sin definir</span>
       )}
+      {obligation.odometerMissing && <small>Falta informar kilometraje</small>}
     </div>
   );
 }
@@ -548,7 +559,11 @@ export function AdminDashboard({ onNavigate }: PageProps) {
                     <span className="admin-row-date">
                       {dateLabel(truck.odometerAt)}
                     </span>
-                    <strong>{formatKm(truck.odometer)} km</strong>
+                    <strong>
+                      {truck.odometer === null
+                        ? "Sin informar"
+                        : `${formatKm(truck.odometer)} km`}
+                    </strong>
                     <ChevronRight size={17} />
                   </button>
                 ))}
@@ -602,8 +617,9 @@ function TruckForm({
           : {
               plate: plate.trim().toUpperCase(),
               label: label.trim(),
-              initialOdometer: Number(initial),
-              initialOdometerAt: businessInstant(at),
+              initialOdometer: optionalNumber(initial),
+              initialOdometerAt:
+                initial.trim() === "" ? null : businessInstant(at),
             },
       );
       onSaved();
@@ -645,22 +661,21 @@ function TruckForm({
           <div className="admin-form-block">
             <h3>
               <Gauge size={18} />
-              Kilometraje inicial
+              Kilometraje inicial (opcional)
             </h3>
             <div className="grid2">
               <Field
                 label="Lectura del odómetro"
                 error={form.fields.initialOdometer}
-                hint="El número que marca el tablero del camión."
+                hint="Si no lo sabés, podés cargarlo después o registrar la primera lectura en un viaje."
               >
                 <input
-                  required
                   type="number"
                   inputMode="numeric"
                   min="0"
                   max="9999999"
                   step="1"
-                  placeholder="0"
+                  placeholder="Sin informar"
                   value={initial}
                   onChange={(event) => setInitial(event.target.value)}
                 />
@@ -670,7 +685,8 @@ function TruckForm({
                 error={form.fields.initialOdometerAt}
               >
                 <input
-                  required
+                  required={initial.trim() !== ""}
+                  disabled={initial.trim() === ""}
                   type="datetime-local"
                   value={at}
                   max={dateTimeInput()}
@@ -700,7 +716,7 @@ function OdometerForm({
   onSaved: (updated: Truck) => void;
 }) {
   const [reference, setReference] = useState(truck);
-  const [odometer, setOdometer] = useState(String(truck.odometer));
+  const [odometer, setOdometer] = useState(truck.odometer?.toString() ?? "");
   const [conflict, setConflict] = useState(false);
   const [refreshed, setRefreshed] = useState(false);
   const form = useFormStatus();
@@ -746,7 +762,11 @@ function OdometerForm({
   }
   return (
     <Modal
-      title="Editar kilometraje"
+      title={
+        reference.odometer === null
+          ? "Cargar kilometraje"
+          : "Editar kilometraje"
+      }
       onClose={() => {
         if (!form.busy) onClose();
       }}
@@ -761,9 +781,16 @@ function OdometerForm({
         </div>
         <div className="admin-odometer-reference">
           <span>
-            Odómetro actual <strong>{formatKm(reference.odometer)} km</strong>
+            Odómetro actual{" "}
+            <strong>
+              {reference.odometer === null
+                ? "Sin informar"
+                : `${formatKm(reference.odometer)} km`}
+            </strong>
           </span>
-          <small>Lectura del {formatDate(reference.odometerAt)}</small>
+          {reference.odometerAt && (
+            <small>Lectura del {formatDate(reference.odometerAt)}</small>
+          )}
         </div>
         <Field
           label="Nuevo odómetro (km)"
@@ -820,6 +847,7 @@ function OdometerForm({
               form.busy ||
               conflict ||
               !reference.active ||
+              odometer.trim() === "" ||
               Number(odometer) === reference.odometer
             }
           >
@@ -873,7 +901,7 @@ function TruckStatusForm({
         </div>
         <p className="admin-form-intro">
           {truck.active
-            ? "Dejará de estar disponible para nuevos viajes y se quitará de sus choferes habituales. Sus viajes y servicios seguirán guardados. Podés reactivarlo después."
+            ? "Dejará de estar disponible para nuevos viajes y se quitará de sus choferes y acoplado habituales. Sus viajes y servicios seguirán guardados. Podés reactivarlo después."
             : "Volverá a estar disponible para viajes. Podés asignarle un chofer desde Equipo."}
         </p>
         <FormError message={form.message} />
@@ -903,6 +931,8 @@ function TruckStatusForm({
 }
 
 export function FleetPage({ onNotify }: PageProps) {
+  const [tab, setTab] = useState<"trucks" | "trailers">("trucks");
+  const [addingTrailer, setAddingTrailer] = useState(false);
   const trucks = useLoad<{ items: Truck[] }>("/trucks");
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
   const [editing, setEditing] = useState<Truck | "new" | null>(null);
@@ -918,170 +948,214 @@ export function FleetPage({ onNotify }: PageProps) {
       <PageHeading
         title="Flota"
         action={
-          <button className="button primary" onClick={() => setEditing("new")}>
+          <button
+            className="button primary"
+            onClick={() =>
+              tab === "trucks" ? setEditing("new") : setAddingTrailer(true)
+            }
+          >
             <Plus size={19} />
-            Agregar camión
+            {tab === "trucks" ? "Agregar camión" : "Agregar acoplado"}
           </button>
         }
       />
-      <div className="admin-toolbar">
-        <span className="admin-result-count">
-          {items.length} {items.length === 1 ? "camión" : "camiones"}
-        </span>
-        <label className="admin-check">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(event) => setShowInactive(event.target.checked)}
-          />
-          <span>Incluir inactivos</span>
-        </label>
+      <div className="admin-tabs" aria-label="Tipo de unidad">
+        <button
+          className={tab === "trucks" ? "active" : ""}
+          aria-pressed={tab === "trucks"}
+          onClick={() => setTab("trucks")}
+        >
+          Camiones
+        </button>
+        <button
+          className={tab === "trailers" ? "active" : ""}
+          aria-pressed={tab === "trailers"}
+          onClick={() => setTab("trailers")}
+        >
+          Acoplados
+        </button>
       </div>
-      <LoadState
-        loading={trucks.loading && !trucks.data}
-        error={trucks.error || drivers.error}
-        retry={() => {
-          trucks.reload();
-          drivers.reload();
-        }}
-      />
-      {trucks.data && !trucks.error && (
-        <section className="admin-surface admin-records">
-          <div className="admin-list-header admin-fleet-row">
-            <span>Camión</span>
-            <span>Chofer habitual</span>
-            <span>Odómetro</span>
-            <span>Estado</span>
-            <span>Acciones</span>
+      {tab === "trailers" ? (
+        <TrailersPanel
+          adding={addingTrailer}
+          onCloseAdd={() => setAddingTrailer(false)}
+          onNotify={onNotify}
+        />
+      ) : (
+        <>
+          <div className="admin-toolbar">
+            <span className="admin-result-count">
+              {items.length} {items.length === 1 ? "camión" : "camiones"}
+            </span>
+            <label className="admin-check">
+              <input
+                type="checkbox"
+                checked={showInactive}
+                onChange={(event) => setShowInactive(event.target.checked)}
+              />
+              <span>Incluir inactivos</span>
+            </label>
           </div>
-          {paged.items.map((truck) => {
-            const assigned =
-              drivers.data?.items.filter(
-                (driver) =>
-                  driver.active && driver.assignedTruckId === truck.id,
-              ) || [];
-            return (
-              <article
-                className="admin-record-row admin-fleet-row"
-                key={truck.id}
-              >
-                <div className="admin-row-identity">
-                  <span className="admin-item-symbol">
-                    <TruckIcon size={24} />
-                  </span>
-                  <div>
-                    <h2>{truck.plate}</h2>
-                    <p>{truck.label}</p>
-                  </div>
-                </div>
-                <div className="admin-row-secondary">
-                  <small className="admin-mobile-label">Chofer habitual</small>
-                  {assigned.map((driver) => driver.name).join(", ") ||
-                    "Sin asignar"}
-                </div>
-                <div className="admin-row-value">
-                  <strong>{formatKm(truck.odometer)} km</strong>
-                  <small>{dateLabel(truck.odometerAt)}</small>
-                </div>
-                <span
-                  className={`badge ${truck.active ? "success" : "neutral"}`}
-                >
-                  {truck.active ? "Activo" : "Inactivo"}
-                </span>
-                <div className="admin-row-actions admin-fleet-actions">
-                  <button
-                    className="button ghost"
-                    aria-label={`Editar camión ${truck.plate}`}
-                    onClick={() => setEditing(truck)}
+          <LoadState
+            loading={trucks.loading && !trucks.data}
+            error={trucks.error || drivers.error}
+            retry={() => {
+              trucks.reload();
+              drivers.reload();
+            }}
+          />
+          {trucks.data && !trucks.error && (
+            <section className="admin-surface admin-records">
+              <div className="admin-list-header admin-fleet-row">
+                <span>Camión</span>
+                <span>Chofer habitual</span>
+                <span>Odómetro</span>
+                <span>Estado</span>
+                <span>Acciones</span>
+              </div>
+              {paged.items.map((truck) => {
+                const assigned =
+                  drivers.data?.items.filter(
+                    (driver) =>
+                      driver.active && driver.assignedTruckId === truck.id,
+                  ) || [];
+                return (
+                  <article
+                    className="admin-record-row admin-fleet-row"
+                    key={truck.id}
                   >
-                    <Pencil size={17} />
-                    <span>Editar</span>
-                  </button>
-                  {truck.active && (
-                    <button
-                      className="button ghost admin-icon-button"
-                      title="Editar kilometraje"
-                      aria-label={`Editar kilometraje de ${truck.plate}`}
-                      onClick={() => setOdometerTruck(truck)}
+                    <div className="admin-row-identity">
+                      <span className="admin-item-symbol">
+                        <TruckIcon size={24} />
+                      </span>
+                      <div>
+                        <h2>{truck.plate}</h2>
+                        <p>{truck.label}</p>
+                      </div>
+                    </div>
+                    <div className="admin-row-secondary">
+                      <small className="admin-mobile-label">
+                        Chofer habitual
+                      </small>
+                      {assigned.map((driver) => driver.name).join(", ") ||
+                        "Sin asignar"}
+                    </div>
+                    <div className="admin-row-value">
+                      <strong>
+                        {truck.odometer === null
+                          ? "Sin informar"
+                          : `${formatKm(truck.odometer)} km`}
+                      </strong>
+                      {truck.odometerAt && (
+                        <small>{dateLabel(truck.odometerAt)}</small>
+                      )}
+                    </div>
+                    <span
+                      className={`badge ${truck.active ? "success" : "neutral"}`}
                     >
-                      <Gauge size={20} />
-                    </button>
-                  )}
-                  <button
-                    className={`button ghost admin-icon-button ${truck.active ? "admin-destructive-action" : ""}`}
-                    title={truck.active ? "Dar de baja" : "Reactivar"}
-                    aria-label={`${truck.active ? "Dar de baja" : "Reactivar"} camión ${truck.plate}`}
-                    onClick={() => setStatusTruck(truck)}
-                  >
-                    {truck.active ? (
-                      <Trash2 size={19} />
-                    ) : (
-                      <RotateCcw size={19} />
-                    )}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-          {!items.length && (
-            <EmptyState
-              title={
-                showInactive
-                  ? "Todavía no hay camiones"
-                  : "No hay camiones activos"
-              }
-              description="Agregá una unidad con su patente y odómetro."
+                      {truck.active ? "Activo" : "Inactivo"}
+                    </span>
+                    <div className="admin-row-actions admin-fleet-actions">
+                      <button
+                        className="button ghost"
+                        aria-label={`Editar camión ${truck.plate}`}
+                        onClick={() => setEditing(truck)}
+                      >
+                        <Pencil size={17} />
+                        <span>Editar</span>
+                      </button>
+                      {truck.active && (
+                        <button
+                          className={`button ghost ${truck.odometer === null ? "admin-load-odometer" : "admin-icon-button"}`}
+                          title={
+                            truck.odometer === null
+                              ? "Cargar kilometraje"
+                              : "Editar kilometraje"
+                          }
+                          aria-label={`${truck.odometer === null ? "Cargar" : "Editar"} kilometraje de ${truck.plate}`}
+                          onClick={() => setOdometerTruck(truck)}
+                        >
+                          <Gauge size={20} />
+                          {truck.odometer === null && <span>Cargar km</span>}
+                        </button>
+                      )}
+                      <button
+                        className={`button ghost admin-icon-button ${truck.active ? "admin-destructive-action" : ""}`}
+                        title={truck.active ? "Dar de baja" : "Reactivar"}
+                        aria-label={`${truck.active ? "Dar de baja" : "Reactivar"} camión ${truck.plate}`}
+                        onClick={() => setStatusTruck(truck)}
+                      >
+                        {truck.active ? (
+                          <Trash2 size={19} />
+                        ) : (
+                          <RotateCcw size={19} />
+                        )}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+              {!items.length && (
+                <EmptyState
+                  title={
+                    showInactive
+                      ? "Todavía no hay camiones"
+                      : "No hay camiones activos"
+                  }
+                  description="Agregá una unidad con su patente y modelo. Podés informar el kilometraje después."
+                />
+              )}
+              <Pagination
+                page={paged.page}
+                pageSize={pageSize}
+                total={items.length}
+                onPage={paged.setPage}
+              />
+            </section>
+          )}
+          {editing && (
+            <TruckForm
+              truck={editing === "new" ? null : editing}
+              onClose={() => setEditing(null)}
+              onSaved={() => {
+                setEditing(null);
+                trucks.reload();
+                onNotify(
+                  editing === "new" ? "Camión agregado" : "Camión actualizado",
+                );
+              }}
             />
           )}
-          <Pagination
-            page={paged.page}
-            pageSize={pageSize}
-            total={items.length}
-            onPage={paged.setPage}
-          />
-        </section>
-      )}
-      {editing && (
-        <TruckForm
-          truck={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
-          onSaved={() => {
-            setEditing(null);
-            trucks.reload();
-            onNotify(
-              editing === "new" ? "Camión agregado" : "Camión actualizado",
-            );
-          }}
-        />
-      )}
-      {odometerTruck && (
-        <OdometerForm
-          truck={odometerTruck}
-          onClose={() => setOdometerTruck(null)}
-          onSaved={(updated) => {
-            setOdometerTruck(null);
-            trucks.reload();
-            onNotify(
-              `Kilometraje de ${updated.plate} actualizado a ${formatKm(updated.odometer)} km`,
-            );
-          }}
-        />
-      )}
-      {statusTruck && (
-        <TruckStatusForm
-          truck={statusTruck}
-          onClose={() => setStatusTruck(null)}
-          onSaved={() => {
-            setStatusTruck(null);
-            trucks.reload();
-            drivers.reload();
-            onNotify(
-              statusTruck.active
-                ? "Camión dado de baja. El historial se conserva."
-                : "Camión reactivado",
-            );
-          }}
-        />
+          {odometerTruck && (
+            <OdometerForm
+              truck={odometerTruck}
+              onClose={() => setOdometerTruck(null)}
+              onSaved={(updated) => {
+                setOdometerTruck(null);
+                trucks.reload();
+                onNotify(
+                  `Kilometraje de ${updated.plate} actualizado a ${formatKm(updated.odometer!)} km`,
+                );
+              }}
+            />
+          )}
+          {statusTruck && (
+            <TruckStatusForm
+              truck={statusTruck}
+              onClose={() => setStatusTruck(null)}
+              onSaved={() => {
+                setStatusTruck(null);
+                trucks.reload();
+                drivers.reload();
+                onNotify(
+                  statusTruck.active
+                    ? "Camión dado de baja. El historial se conserva."
+                    : "Camión reactivado",
+                );
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );
@@ -1297,7 +1371,11 @@ function UserTruckForm({
             {trucks
               .filter((truck) => truck.active || truck.id === assignedTruckId)
               .map((truck) => (
-                <option key={truck.id} value={truck.id} disabled={!truck.active}>
+                <option
+                  key={truck.id}
+                  value={truck.id}
+                  disabled={!truck.active}
+                >
                   {truck.plate} · {truck.label}
                   {!truck.active && " (inactivo)"}
                 </option>
@@ -2373,6 +2451,7 @@ function StepFooter({
 function ObligationForm({
   obligation,
   trucks,
+  trailers,
   drivers,
   defaults,
   onClose,
@@ -2380,6 +2459,7 @@ function ObligationForm({
 }: {
   obligation: Obligation | null;
   trucks: Truck[];
+  trailers: Trailer[];
   drivers: Driver[];
   defaults: Settings | null;
   onClose: () => void;
@@ -2390,11 +2470,15 @@ function ObligationForm({
     obligation?.kind || "SERVICE",
   );
   const [title, setTitle] = useState(obligation?.title || "");
-  const [ownerType, setOwnerType] = useState<"truck" | "driver">(
-    obligation?.driverId ? "driver" : "truck",
+  const [ownerType, setOwnerType] = useState<"truck" | "trailer" | "driver">(
+    obligation?.trailerId
+      ? "trailer"
+      : obligation?.driverId
+        ? "driver"
+        : "truck",
   );
   const [ownerId, setOwnerId] = useState(
-    obligation?.truckId || obligation?.driverId || "",
+    obligation?.truckId || obligation?.trailerId || obligation?.driverId || "",
   );
   const [dueDate, setDueDate] = useState(
     obligation?.dueDate?.slice(0, 10) || "",
@@ -2434,6 +2518,7 @@ function ObligationForm({
           title: title.trim(),
           kind,
           truckId: ownerType === "truck" ? ownerId : null,
+          trailerId: ownerType === "trailer" ? ownerId : null,
           driverId: ownerType === "driver" ? ownerId : null,
           dueDate: dueDate || null,
           dueKm: ownerType === "truck" ? optionalNumber(dueKm) : null,
@@ -2447,7 +2532,8 @@ function ObligationForm({
             ? {
                 initialRecord: {
                   performedAt: businessInstant(performedAt),
-                  odometer: optionalNumber(odometer),
+                  odometer:
+                    ownerType === "truck" ? optionalNumber(odometer) : null,
                 },
               }
             : {}),
@@ -2460,7 +2546,14 @@ function ObligationForm({
         const fields = Object.keys(error.fields);
         if (
           fields.some((key) =>
-            ["title", "kind", "truckId", "driverId", "notes"].includes(key),
+            [
+              "title",
+              "kind",
+              "truckId",
+              "trailerId",
+              "driverId",
+              "notes",
+            ].includes(key),
           )
         )
           setStep(0);
@@ -2483,7 +2576,9 @@ function ObligationForm({
   const ownerName =
     ownerType === "truck"
       ? trucks.find((item) => item.id === ownerId)?.plate
-      : drivers.find((item) => item.id === ownerId)?.name;
+      : ownerType === "trailer"
+        ? trailers.find((item) => item.id === ownerId)?.plate
+        : drivers.find((item) => item.id === ownerId)?.name;
   return (
     <Modal
       title={obligation ? "Editar vencimiento" : "Agregar vencimiento"}
@@ -2513,7 +2608,7 @@ function ObligationForm({
                     aria-pressed={kind === "SERVICE"}
                     onClick={() => {
                       setKind("SERVICE");
-                      if (ownerType !== "truck") {
+                      if (ownerType === "driver") {
                         setOwnerType("truck");
                         setOwnerId("");
                       }
@@ -2550,19 +2645,37 @@ function ObligationForm({
                 <Field label="Corresponde a">
                   <select
                     value={ownerType}
-                    disabled={!!obligation || kind === "SERVICE"}
+                    disabled={!!obligation}
                     onChange={(event) => {
-                      setOwnerType(event.target.value as "truck" | "driver");
+                      setOwnerType(
+                        event.target.value as "truck" | "trailer" | "driver",
+                      );
                       setOwnerId("");
+                      setDueKm("");
+                      setIntervalKm("");
+                      setOdometer("");
                     }}
                   >
                     <option value="truck">Un camión</option>
-                    <option value="driver">Un chofer</option>
+                    <option value="trailer">Un acoplado</option>
+                    {kind === "DOCUMENT" && (
+                      <option value="driver">Un chofer</option>
+                    )}
                   </select>
                 </Field>
                 <Field
-                  label={ownerType === "truck" ? "Camión" : "Chofer"}
-                  error={form.fields.truckId || form.fields.driverId}
+                  label={
+                    ownerType === "truck"
+                      ? "Camión"
+                      : ownerType === "trailer"
+                        ? "Acoplado"
+                        : "Chofer"
+                  }
+                  error={
+                    form.fields.truckId ||
+                    form.fields.trailerId ||
+                    form.fields.driverId
+                  }
                 >
                   <select
                     required
@@ -2571,8 +2684,8 @@ function ObligationForm({
                     onChange={(event) => setOwnerId(event.target.value)}
                   >
                     <option value="">Seleccionar…</option>
-                    {ownerType === "truck"
-                      ? trucks
+                    {ownerType !== "driver"
+                      ? (ownerType === "truck" ? trucks : trailers)
                           .filter((item) => item.active || item.id === ownerId)
                           .map((item) => (
                             <option key={item.id} value={item.id}>
@@ -2631,7 +2744,9 @@ function ObligationForm({
               </div>
               <p className="admin-field-note">
                 {dueDate || (ownerType === "truck" && dueKm)
-                  ? "Se avisa al alcanzar cualquiera de los límites. El odómetro es la lectura total, no los kilómetros restantes."
+                  ? ownerType === "truck"
+                    ? "Se avisa al alcanzar cualquiera de los límites. El odómetro es la lectura total, no los kilómetros restantes."
+                    : "Se avisará según la fecha límite y los días de anticipación que definas."
                   : "Sin un límite, quedará pendiente de configurar."}
               </p>
               <div className="grid2">
@@ -2750,22 +2865,24 @@ function ObligationForm({
                             }
                           />
                         </Field>
-                        <Field
-                          label="Odómetro de ese servicio"
-                          error={form.fields["initialRecord.odometer"]}
-                        >
-                          <input
-                            required
-                            type="number"
-                            min="0"
-                            step="1"
-                            inputMode="numeric"
-                            value={odometer}
-                            onChange={(event) =>
-                              setOdometer(event.target.value)
-                            }
-                          />
-                        </Field>
+                        {ownerType === "truck" && (
+                          <Field
+                            label="Odómetro de ese servicio"
+                            error={form.fields["initialRecord.odometer"]}
+                          >
+                            <input
+                              required
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputMode="numeric"
+                              value={odometer}
+                              onChange={(event) =>
+                                setOdometer(event.target.value)
+                              }
+                            />
+                          </Field>
+                        )}
                       </div>
                       {(intervalMonths || intervalKm) && (
                         <button
@@ -2854,7 +2971,8 @@ function RenewalForm({
     try {
       await send(`/obligations/${obligation.id}/renewals`, "POST", {
         performedAt: businessInstant(performedAt),
-        odometer: service ? optionalNumber(odometer) : null,
+        odometer:
+          service && obligation.truckId ? optionalNumber(odometer) : null,
         nextDueDate: nextDueDate || null,
         nextDueKm: obligation.truckId ? optionalNumber(nextDueKm) : null,
         notes: notes.trim() || null,
@@ -2907,14 +3025,14 @@ function RenewalForm({
                     onChange={(event) => setPerformedAt(event.target.value)}
                   />
                 </Field>
-                {service && (
+                {service && obligation.truckId && (
                   <Field
                     label="Odómetro del servicio"
                     error={form.fields.odometer}
                     hint={
-                      obligation.truck
+                      obligation.truck?.odometer != null
                         ? `Última lectura: ${formatKm(obligation.truck.odometer)} km (${dateLabel(obligation.truck.odometerAt)}).`
-                        : undefined
+                        : "Kilometraje del camión sin informar."
                     }
                   >
                     <input
@@ -3106,6 +3224,7 @@ function HistoryModal({
 export function ObligationsPage({ onNotify }: PageProps) {
   const state = useLoad<{ items: Obligation[] }>("/obligations");
   const trucks = useLoad<{ items: Truck[] }>("/trucks");
+  const trailers = useLoad<{ items: Trailer[] }>("/trailers");
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
   const settings = useLoad<Settings>("/settings");
   const [filter, setFilter] = useState("all");
@@ -3138,7 +3257,7 @@ export function ObligationsPage({ onNotify }: PageProps) {
             item.status !== "OK") ||
           (filter === "service" && item.kind === "SERVICE") ||
           (filter === "document" && item.kind === "DOCUMENT")) &&
-        `${item.title} ${item.truck?.plate || ""} ${item.driver?.name || ""}`
+        `${item.title} ${item.truck?.plate || ""} ${item.trailer?.plate || ""} ${item.driver?.name || ""}`
           .normalize("NFD")
           .replace(/[\u0300-\u036f]/g, "")
           .toLowerCase()
@@ -3157,6 +3276,7 @@ export function ObligationsPage({ onNotify }: PageProps) {
   const reloadAll = () => {
     state.reload();
     trucks.reload();
+    trailers.reload();
     drivers.reload();
     settings.reload();
   };
@@ -3217,7 +3337,13 @@ export function ObligationsPage({ onNotify }: PageProps) {
       </div>
       <LoadState
         loading={state.loading && !state.data}
-        error={state.error || trucks.error || drivers.error || settings.error}
+        error={
+          state.error ||
+          trucks.error ||
+          trailers.error ||
+          drivers.error ||
+          settings.error
+        }
         retry={reloadAll}
       />
       {state.data && !state.error && (
@@ -3254,7 +3380,9 @@ export function ObligationsPage({ onNotify }: PageProps) {
                   {!item.ownerActive
                     ? "Conservado en el historial"
                     : item.status === "UNCONFIGURED"
-                      ? "Pendiente de configurar"
+                      ? item.odometerMissing
+                        ? "Falta informar kilometraje"
+                        : "Pendiente de configurar"
                       : [
                           item.daysRemaining !== null
                             ? item.daysRemaining < 0
@@ -3281,7 +3409,11 @@ export function ObligationsPage({ onNotify }: PageProps) {
                 )}
                 {!item.ownerActive ? (
                   <small>
-                    {item.truckId ? "Camión dado de baja" : "Chofer inactivo"}
+                    {item.truckId
+                      ? "Camión dado de baja"
+                      : item.trailerId
+                        ? "Acoplado dado de baja"
+                        : "Chofer inactivo"}
                   </small>
                 ) : (
                   !item.active && <small>Inactivo</small>
@@ -3343,6 +3475,7 @@ export function ObligationsPage({ onNotify }: PageProps) {
         <ObligationForm
           obligation={editing === "new" ? null : editing}
           trucks={trucks.data?.items || []}
+          trailers={trailers.data?.items || []}
           drivers={drivers.data?.items || []}
           defaults={settings.data}
           onClose={() => setEditing(null)}
@@ -3384,7 +3517,7 @@ export function ReportsPage({ onNotify }: PageProps) {
   const [driverId, setDriverId] = useState("");
   const [truckId, setTruckId] = useState("");
   const [page, setPage] = useState(1);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<"form" | "detail" | null>(null);
   const pageSize = usePageSize(530, 76);
   useEffect(() => setPage(1), [pageSize]);
   const query = new URLSearchParams({
@@ -3402,11 +3535,13 @@ export function ReportsPage({ onNotify }: PageProps) {
     setter(value);
     setPage(1);
   }
-  async function download() {
+  async function download(format: "form" | "detail") {
     if (exporting) return;
-    setExporting(true);
+    setExporting(format);
     try {
-      const response = await fetch(`/api/trips/export?${query}`, {
+      const filters = new URLSearchParams(query);
+      if (format === "detail") filters.set("format", "detail");
+      const response = await fetch(`/api/trips/export?${filters}`, {
         credentials: "same-origin",
         headers: { "X-Tomasini-Request": "1" },
       });
@@ -3420,7 +3555,7 @@ export function ReportsPage({ onNotify }: PageProps) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `Tomasini-viajes-${from}-${to}.xlsx`;
+      link.download = `Tomasini-${format === "detail" ? "detalle" : "planilla-km"}-${from}-${to}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -3429,7 +3564,7 @@ export function ReportsPage({ onNotify }: PageProps) {
     } catch (error) {
       onNotify(err(error), "error");
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   }
   const invalidDates = !from || !to || from > to;
@@ -3438,20 +3573,30 @@ export function ReportsPage({ onNotify }: PageProps) {
     !state.data?.total ||
     !!state.error ||
     state.loading ||
-    exporting;
+    exporting !== null;
   return (
     <div className="admin-page">
       <PageHeading
         title="Reportes"
         action={
-          <button
-            className="button primary"
-            disabled={disabled}
-            onClick={download}
-          >
-            <ArrowDownToLine size={19} />
-            {exporting ? "Preparando Excel…" : "Descargar Excel"}
-          </button>
+          <div className="admin-heading-actions report-downloads">
+            <button
+              className="button primary"
+              disabled={disabled}
+              onClick={() => download("form")}
+            >
+              <ArrowDownToLine size={19} />
+              {exporting === "form" ? "Preparando planilla…" : "Planilla para el contador"}
+            </button>
+            <button
+              className="button secondary"
+              disabled={disabled}
+              onClick={() => download("detail")}
+            >
+              <ArrowDownToLine size={17} />
+              {exporting === "detail" ? "Preparando detalle…" : "Detalle operativo"}
+            </button>
+          </div>
         }
       />
       <section className="admin-report-filters">
@@ -3563,6 +3708,11 @@ export function ReportsPage({ onNotify }: PageProps) {
                           <td>
                             <strong>{trip.driver.name}</strong>
                             <small>{trip.truck.plate}</small>
+                            <small>
+                              {trip.trailer
+                                ? `Acoplado · ${trip.trailer.plate}`
+                                : "Sin acoplado registrado"}
+                            </small>
                           </td>
                           <td className="numeric">
                             {formatKm(trip.distanceKm)}
@@ -3602,6 +3752,11 @@ export function ReportsPage({ onNotify }: PageProps) {
                       </h3>
                       <p>
                         {trip.driver.name} · {trip.truck.plate}
+                      </p>
+                      <p>
+                        {trip.trailer
+                          ? `Acoplado · ${trip.trailer.plate}`
+                          : "Sin acoplado registrado"}
                       </p>
                       <footer>
                         <strong>{formatKm(trip.distanceKm)} km</strong>

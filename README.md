@@ -1,6 +1,6 @@
 # Transporte Tomasini
 
-Aplicación web para registrar viajes, revisar kilómetros y controlar servicios y documentación de camiones y choferes. Interfaz en español, clara, azul oscuro y gris, diseñada para celular y escritorio.
+Aplicación web para registrar viajes, revisar kilómetros y controlar servicios y documentación de camiones, acoplados y choferes. Interfaz en español, clara, azul oscuro y gris, diseñada para celular y escritorio.
 
 ## Sitio publicado
 
@@ -35,11 +35,16 @@ Solo funciona en la base local `tomasini_dev` vacía. Crea tres camiones, tres c
 ## Uso
 
 - **Chofer:** carga viajes realizados, consulta su historial y corrige registros aún no revisados. El camión habitual se ofrece por defecto; las lecturas del odómetro se confirman manualmente.
-- **Administración:** gestiona camiones y choferes, revisa/corrige/anula viajes, mantiene vencimientos y servicios, consulta historial y descarga Excel.
+- **Administración:** gestiona camiones, acoplados y choferes, revisa/corrige/anula viajes, mantiene vencimientos y servicios, consulta historial y descarga Excel.
+- **Controles:** al cargar un viaje, el chofer o el administrativo indica cuántos controles de descarga se realizaron. El detalle conserva la diferencia entre cero y un viaje anterior sin dato.
+- **Reportes:** «Planilla para el contador» descarga el formulario del convenio 40/89 con los viajes filtrados, agrupados por chofer, mes de salida y camión. El CUIL y los conceptos del convenio que no se registran en el viaje se pueden completar en Excel antes de firmar. «Detalle operativo» descarga los datos de gestión, incluidos acoplado, controles y viáticos en pesos.
+- **Flota:** permite crear camiones sin conocer su kilometraje y completarlo después. “Sin informar” es distinto de cero; el primer viaje o servicio con lectura también informa el odómetro. Los viajes siguen requiriendo kilómetros de salida y llegada.
+- **Acoplados:** tienen patente, descripción, documentación y mantenimiento por fecha, sin odómetro. Se permite un acoplado por camión o dejarlo sin asignar. Los cambios quedan auditados y conservan su documentación; una baja desasigna y la reactivación no recupera asignaciones anteriores.
+- Cada viaje puede registrar el acoplado efectivamente usado. La sugerencia corresponde a la asignación actual y debe confirmarse para el viaje; cambiarla no modifica la flota. El registro permanece en el historial y Excel aunque luego cambien las asignaciones.
 - Los avisos se calculan por fecha, kilómetros o ambos; se aplica el primero que alcance el límite. La lectura actual se deriva del historial cronológico, incluyendo servicios, y se muestra con su fecha.
 - Los viáticos son importes opcionales en ARS. No se liquidan salarios ni se interpreta el convenio laboral.
 - El formulario conserva la carga ante errores; un envío ambiguo se reintenta con el mismo contenido e identificador para evitar duplicados. La sesión puede recuperarse sin recargar el formulario.
-- El sistema requiere conexión. No incluye seguimiento GPS, carga offline, facturación, combustible, peajes, adjuntos ni acoplados.
+- El sistema requiere conexión. No incluye seguimiento GPS, carga offline, facturación, combustible, peajes ni adjuntos.
 
 ## Verificación
 

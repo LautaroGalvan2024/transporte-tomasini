@@ -1151,6 +1151,9 @@
   .admin-heading-actions > .button:only-child {
     grid-column: 1 / -1;
   }
+  .admin-heading-actions.report-downloads {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 185px), 1fr));
+  }
   .admin-page .admin-tabs {
     gap: 18px;
     flex-wrap: wrap;
@@ -1499,11 +1502,72 @@
   min-height: 48px;
   padding: 0;
 }
+.admin-page .admin-load-odometer {
+  min-width: 100px;
+  white-space: nowrap;
+}
+.admin-trailer-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(150px, 1fr) 80px minmax(
+      300px,
+      auto
+    );
+  align-items: center;
+  gap: 16px;
+}
+.admin-trailer-row .admin-row-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.admin-trailer-row .admin-row-secondary > small:not(.admin-mobile-label) {
+  color: #65788a;
+  font-size: 12px;
+}
+.admin-trailer-toolbar > .field {
+  flex: 1;
+  max-width: 390px;
+}
+.admin-page .admin-trailer-actions {
+  flex-wrap: nowrap;
+}
+.admin-trailer-actions .admin-icon-button {
+  min-width: 44px;
+  min-height: 48px;
+}
+@media (max-width: 1099px) {
+  .admin-page .admin-list-header.admin-trailer-row {
+    display: none;
+  }
+  .admin-page .admin-trailer-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .admin-trailer-row > .badge {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .admin-trailer-row .admin-row-secondary {
+    grid-column: 1 / -1;
+  }
+  .admin-page .admin-trailer-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .admin-page .admin-trailer-toolbar {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .admin-trailer-toolbar > .field {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
 @media (min-width: 1100px) {
   .admin-page .admin-fleet-row {
     grid-template-columns:
-      minmax(160px, 1.3fr) minmax(100px, 1fr) minmax(125px, 1fr)
-      76px 192px;
+      minmax(140px, 1.3fr) minmax(90px, 1fr) minmax(110px, 1fr)
+      76px 245px;
     gap: 12px;
   }
   .admin-page .admin-fleet-actions {

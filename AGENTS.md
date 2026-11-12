@@ -5,3 +5,4 @@
 - No imprimir secretos. Archivos privados en .local/ o .env ignorados. Migraciones revisadas, con comprobación explícita de base/rol; no db push, reset ni migraciones al arrancar.
 - API con sesiones PostgreSQL, autorización por rol/propiedad y protección CSRF. Viajes auditables e idempotentes; revisados solo corregibles por administración.
 - Probar con PostgreSQL propio y aislado. Compilar y verificar tipos, pruebas funcionales y revisión visual de celular/escritorio antes de entregar. No simular verificaciones con choferes reales.
+- Publicar los cambios de Tomasini en producción cuando pasen las verificaciones. Seguir el procedimiento de despliegue correspondiente y comprobar el sitio después de publicar.

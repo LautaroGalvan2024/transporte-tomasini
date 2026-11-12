@@ -108,7 +108,8 @@ export async function runNotificationJob(
     alerts: alerts.map((o) => ({
       id: o.id,
       title: o.title,
-      target: o.truck?.plate ?? o.driver?.name,
+      target: o.truck?.plate ?? o.trailer?.plate ?? o.driver?.name,
+      targetType: o.trailer ? "TRAILER" : o.truck ? "TRUCK" : "DRIVER",
       status: o.status,
       dueDate: o.dueDate,
       dueKm: o.dueKm,
@@ -167,7 +168,9 @@ export async function runNotificationJob(
     return { sent: 0, pending: 1, reason: "WAITING_OR_CLAIMED" };
   const attempt = job.attempts + 1;
   const lines = alerts.map((o) => {
-    const target = o.truck?.plate ?? o.driver?.name ?? "Sin asignar";
+    const target = o.trailer
+      ? `Acoplado ${o.trailer.plate}`
+      : (o.truck?.plate ?? o.driver?.name ?? "Sin asignar");
     const deadline = [
       o.dueDate ? `fecha ${o.dueDate}` : "",
       o.dueKm !== null ? `${o.dueKm.toLocaleString("es-AR")} km` : "",
@@ -176,7 +179,9 @@ export async function runNotificationJob(
       .join(" o ");
     const reading =
       o.truck && o.dueKm !== null
-        ? ` Última lectura: ${o.truck.odometer.toLocaleString("es-AR")} km (${businessDay(new Date(o.truck.odometerAt))}).`
+        ? o.truck.odometer !== null && o.truck.odometerAt !== null
+          ? ` Última lectura: ${o.truck.odometer.toLocaleString("es-AR")} km (${businessDay(new Date(o.truck.odometerAt))}).`
+          : " Kilometraje sin informar. No se pudo evaluar el vencimiento por kilómetros."
         : "";
     return `- ${o.status === "OVERDUE" ? "VENCIDO" : "POR VENCER"}: ${o.title} · ${target} · ${deadline}.${reading}`;
   });

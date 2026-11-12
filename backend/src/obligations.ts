@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { Obligation } from "@prisma/client";
-import { getDb, lockTrucks, transaction } from "./db.js";
+import { getDb, lockTrucks, lockTrailers, transaction } from "./db.js";
 import { currentUser, requireAdmin } from "./auth.js";
 import { ensure } from "./errors.js";
 import {
@@ -17,18 +17,22 @@ import {
   activeDriver,
 } from "./models.js";
 import { dateOnly, businessDay } from "./domain.js";
+import { activeTrailer } from "./trailer-models.js";
+import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
 
 function validateOwner(input: {
   truckId?: string | null;
   driverId?: string | null;
+  trailerId?: string | null;
   kind: string;
   dueKm?: number | null;
   intervalKm?: number | null;
 }) {
   ensure(
-    Boolean(input.truckId) !== Boolean(input.driverId),
+    [input.truckId, input.driverId, input.trailerId].filter(Boolean).length ===
+      1,
     400,
-    "Seleccioná un camión o un chofer, solo uno.",
+    "Seleccioná un camión, acoplado o chofer, solo uno.",
   );
   ensure(
     input.truckId || (input.dueKm == null && input.intervalKm == null),
@@ -36,9 +40,9 @@ function validateOwner(input: {
     "Los vencimientos por kilómetros requieren un camión.",
   );
   ensure(
-    input.kind !== "SERVICE" || input.truckId,
+    input.kind !== "SERVICE" || input.truckId || input.trailerId,
     400,
-    "Los servicios requieren un camión.",
+    "Los servicios requieren un camión o un acoplado.",
   );
 }
 function validatePerformance(
@@ -71,11 +75,23 @@ function validatePerformance(
       "Ingresá los kilómetros del service para actualizar su historial.",
     );
 }
-function canRead(user: ReturnType<typeof currentUser>, row: Obligation) {
+async function canRead(user: ReturnType<typeof currentUser>, row: Obligation) {
   return (
     user.role === "ADMIN" ||
     row.driverId === user.driver?.id ||
-    Boolean(row.truckId && row.truckId === user.driver?.assignedTruckId)
+    Boolean(row.truckId && row.truckId === user.driver?.assignedTruckId) ||
+    Boolean(
+      row.trailerId &&
+      user.driver?.assignedTruckId &&
+      (await getDb().trailer.findFirst({
+        where: {
+          id: row.trailerId,
+          active: true,
+          assignedTruckId: user.driver.assignedTruckId,
+        },
+        select: { id: true },
+      })),
+    )
   );
 }
 
@@ -88,7 +104,7 @@ export function obligationsRouter() {
     const id = uuid.parse(req.params.id),
       row = await getDb().obligation.findUnique({ where: { id } });
     ensure(
-      row && canRead(currentUser(req), row),
+      row && (await canRead(currentUser(req), row)),
       404,
       "No se encontró el vencimiento.",
     );
@@ -115,6 +131,8 @@ export function obligationsRouter() {
     validateOwner(input);
     const { initialRecord, ...body } = input;
     const id = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       const settings = await tx.setting.findUniqueOrThrow({
         where: { id: "main" },
       });
@@ -123,6 +141,10 @@ export function obligationsRouter() {
         await activeTruck(tx, body.truckId);
       }
       if (body.driverId) await activeDriver(tx, body.driverId);
+      if (body.trailerId) {
+        await lockTrailers(tx, [body.trailerId]);
+        await activeTrailer(tx, body.trailerId);
+      }
       const row = await tx.obligation.create({
         data: {
           ...body,
@@ -167,6 +189,8 @@ export function obligationsRouter() {
       input = obligationUpdate.parse(req.body),
       user = currentUser(req);
     await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       const old = await tx.obligation.findUnique({
         where: { id },
         include: { _count: { select: { renewals: true } } },
@@ -185,9 +209,10 @@ export function obligationsRouter() {
         old._count.renewals === 0 ||
           (old.kind === owner.kind &&
             old.truckId === owner.truckId &&
-            old.driverId === owner.driverId),
+            old.driverId === owner.driverId &&
+            old.trailerId === owner.trailerId),
         409,
-        "Con historial registrado no se puede cambiar el tipo ni el camión o chofer. Creá otro vencimiento.",
+        "Con historial registrado no se puede cambiar el tipo ni el camión, acoplado o chofer. Creá otro vencimiento.",
       );
       if (owner.truckId) {
         await lockTrucks(tx, [owner.truckId]);
@@ -195,6 +220,11 @@ export function obligationsRouter() {
       }
       if (owner.driverId && owner.driverId !== old.driverId)
         await activeDriver(tx, owner.driverId);
+      if (owner.trailerId) {
+        await lockTrailers(tx, [owner.trailerId]);
+        if (owner.trailerId !== old.trailerId)
+          await activeTrailer(tx, owner.trailerId);
+      }
       const row = await tx.obligation.update({
         where: { id, version: input.version },
         data: {
@@ -214,6 +244,8 @@ export function obligationsRouter() {
       input = renewalBody.parse(req.body),
       user = currentUser(req);
     await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, user.id, req.sessionId);
       const old = await tx.obligation.findUnique({
         where: { id },
         include: { renewals: { orderBy: { performedAt: "desc" }, take: 1 } },
@@ -267,6 +299,10 @@ export function obligationsRouter() {
           });
       }
       if (old.driverId) await activeDriver(tx, old.driverId);
+      if (old.trailerId) {
+        await lockTrailers(tx, [old.trailerId]);
+        await activeTrailer(tx, old.trailerId);
+      }
       const renewal = await tx.renewal.create({
         data: {
           obligationId: id,

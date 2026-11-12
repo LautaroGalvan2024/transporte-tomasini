@@ -78,24 +78,28 @@ Ante una falla, se detienen únicamente las unidades nuevas, se deshabilitan sus
 
 ## Actualizar la aplicación existente
 
-Para la ampliación aditiva de invitaciones, usar `infra/update_vps.py` y los launchers de actualización. El instalador inicial no sirve para actualizar una aplicación con datos.
+Para las ampliaciones revisadas de invitaciones, flota y controles de viajes, usar `infra/update_vps.py` y los launchers de actualización. El instalador inicial no sirve para actualizar una aplicación con datos.
 
 Después de verificar y compilar el código final:
 
 ```powershell
-node scripts/package-update.mjs --previous-manifest=".local/releases/tomasini-2026-11-02T14-30-57-695Z.tar.gz.json"
+node scripts/package-update.mjs --previous-manifest="<manifiesto de la versión activa>"
 & '.\scripts\start-update.ps1' -UpdateManifest '<ruta del archivo .update.json generado>'
 ```
 
-El plan generado registra el hash exacto de las versiones anterior/nueva, el esquema y cada migración. Rechaza cambios en SQL ya publicado. Esta revisión permite exclusivamente `202611020002_invitations`: crea la tabla, índices y relaciones nuevas, compatible con el código anterior. Un cambio destructivo o una ampliación diferente requiere un plan revisado.
+El plan generado registra el hash exacto de las versiones anterior/nueva, el esquema y cada migración. Rechaza cambios en SQL ya publicado. Admite una sola migración pendiente de las revisadas: `202611020002_invitations`, `202611040001_trailers_optional_odometer` o `202611110001_trip_control_count`. La versión activa debe tener un recibo inequívoco de instalación, actualización o CI cuyo hash completo coincida con el manifiesto anterior.
+
+Para controles, el empaquetador y la VPS exigen el historial completo hasta flota y el SHA-256 del SQL de controles revisado. El actualizador coteja también ese historial con los archivos del release activo. La migración agrega `Trip.controlCount` como entero opcional con restricción de valor no negativo. Los viajes anteriores quedan con el valor nulo. El release de flota puede seguir leyendo y escribiendo en la misma tabla. Después de aplicar el SQL se verifican los permisos efectivos de aplicación y respaldo sobre la nueva columna.
 
 El actualizador verifica la versión activa, el historial SQL y los servicios existentes antes de preparar un nuevo release. Instala dependencias y genera Prisma bajo cuotas; no entrega la configuración ni credenciales de producción a npm. Antes de migrar crea un respaldo nuevo `update-<hash>-before.dump`, separado de las copias diarias y validado con su SHA-256 y el listado de `pg_restore`.
+
+Si la preparación de **controles** se interrumpió antes del respaldo, revisar primero el enlace `current`, los procesos y la evidencia del intento. El modo manual `-ResumePreparation` del launcher utiliza el mismo paquete, manifiesto y plan, y exige verificar por separado la huella del actualizador de recuperación. Bajo bloqueo en la VPS comprueba que no haya preparación ni migración activa, que la migración siga pendiente, que no exista la columna ni un respaldo de ese intento y que el plan y la evidencia correspondan a la versión anterior. Sólo entonces guarda las carpetas parciales en un directorio privado y prepara todo de nuevo. Ante un recibo, una migración iniciada o cualquier estado posterior, se detiene para revisión. No quitar archivos para forzar una repetición.
 
 La migración se ejecuta con una identidad Linux transitoria distinta de la aplicación y un archivo de ambiente root 0600. Se habilita temporalmente el rol `tomasini_prod_migrator` y se revocan LOGIN, contraseña y sesiones propias al terminar, incluso ante errores. El archivo temporal se retira. No se crean usuarios iniciales ni se ejecutan semillas.
 
 El release nuevo queda propiedad de root y sin escritura para el proceso de aplicación. El cambio de `current` es atómico y se reinicia únicamente `tomasini.service`. Se comprueban readiness, HTML/assets publicados, preservación de usuarios/datos, la misma huella de `api.env` —incluido cualquier SMTP configurado por el usuario— y los PID/configuraciones/respuestas de Mozzi y Horizontes. No se modifica HBA, Nginx, certificados ni unidades de servicios durante esta actualización.
 
-Si falla después de activar código nuevo, se restablece el enlace anterior y se reinicia únicamente Tomasini. No se ejecuta SQL inverso ni se restaura automáticamente una base encima de datos actuales: la ampliación aditiva permanece compatible con el release anterior. Ambos releases, el respaldo y la evidencia se conservan para revisión.
+Para invitaciones y controles, un fallo después de activar código nuevo permite restablecer el enlace anterior y reiniciar únicamente Tomasini. La ampliación de esquema compatible permanece aplicada. Para flota, el plan exige `quiesce-tomasini` y recuperación `forward-only`: desde el primer intento de migración, incluso si su resultado es incierto, se mantienen pausados únicamente Tomasini y su timer de correos ante un fallo. No se vuelve al binario anterior, se ejecuta SQL inverso ni se restaura automáticamente sobre datos actuales. Ambos releases, el respaldo y la evidencia se conservan para revisión.
 
 Una única autenticación sudo cubre actualización y entrega. Se descargan recibo, evidencia antes/después, plan y respaldo previo con ACL privada; no se vuelve a exportar la credencial inicial. El estado local queda en `.local/deployments/<hash-corto>/state.json`. El respaldo previo se verifica con `scripts/restore-production-backup.mjs` en el cluster local exclusivo. Ante un fallo, el actualizador prepara diagnóstico redactado privado para que pueda revisarse sin otra autenticación sudo.
 
@@ -121,6 +125,16 @@ Bootstrap único, después de revisar los helpers:
 El bootstrap requiere una sola autenticación sudo, crea recursos exclusivos y no reinicia la aplicación. Antes de habilitar la clave ejecuta `npm ci` y Prisma generate completos sobre el código público del release actual, en el mismo sandbox; verifica permisos, runtime, enlaces y esquema. El recibo público se descarga sin otra autenticación. Si algún paso falla, no se repite automáticamente: se deshabilita el acceso recién creado y se conserva evidencia. Tras configurarlo, comprobar con la clave CI que un comando como `true` es rechazado; luego verificar un despliegue real de `main` y el recibo antes de considerar terminado el flujo.
 
 ## Correo, respaldos y operación
+
+### Entrega con acoplados y kilometraje opcional
+
+La versión con `202611040001_trailers_optional_odometer` cambia el esquema; el receptor CI debe seguir rechazando su publicación automática. Preparar un despliegue manual revisado, con respaldo de Tomasini y comprobación explícita de base/rol mediante `backend/scripts/migrate.ts`. No usar `db push`, resets ni migraciones al arrancar, y no modificar los controles de aislamiento para permitir la entrega.
+
+Aplicar la migración y activar juntos backend/frontend compatibles, suspendiendo únicamente las escrituras de Tomasini durante el cambio. Verificar permisos DML del rol de aplicación y lectura del rol de respaldo sobre `Trailer`, readiness, acceso a Flota y preservación de viajes/vencimientos existentes. Conservar la evidencia privada y los controles anteriores/posteriores de los servicios vecinos.
+
+El actualizador pausa el timer de correos propio, espera que termine cualquier entrega en curso y detiene únicamente `tomasini.service`. Rechaza conexiones remanentes del rol app antes de respaldar y migrar. Compara conteos y huellas de todas las columnas originales antes/después de la migración; luego ejecuta los DTO de camiones, acoplados, obligaciones y viajes con el rol app y transacciones de solo lectura comprobadas. Estas evidencias se descargan como `data-preservation.json` y `data-access.json`. Tras verificar el código nuevo y los assets públicos, restaura el estado previo del timer. No pausa respaldos ni certificados y no cambia ningún servicio vecino.
+
+El DDL conserva datos existentes, pero **el binario anterior no admite los nuevos estados**: camiones sin lectura y obligaciones de acoplados. Después de habilitar escrituras no basta con volver al código anterior. Ante un fallo, mantener las escrituras de Tomasini suspendidas y corregir hacia adelante; cualquier recuperación desde respaldo requiere revisar por separado las escrituras posteriores. No ejecutar SQL inverso ni restaurar automáticamente sobre la base existente.
 
 - `tomasini-notifications.timer` despierta cada 15 minutos. El backend decide cuándo corresponde el resumen de las 08:00 de Argentina y maneja reintentos/deduplicación. Configurar `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` y `SMTP_FROM` en `api.env` con editor/entrada privada; no enviarlas por chat ni versionarlas. Hasta completar y probar SMTP, los avisos externos no están operativos.
 - `tomasini-backup.timer` ejecuta `infra/backup.py` diariamente a las 03:15 de Argentina. Usa un rol de lectura propio, escribe dumps privados, valida su listado y conserva 14 copias diarias completas. Una copia parcial nunca se sobrescribe automáticamente. La instalación ejecuta el primer respaldo.

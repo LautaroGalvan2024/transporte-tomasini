@@ -19,10 +19,21 @@ export interface Truck {
   plate: string;
   label: string;
   active: boolean;
-  initialOdometer: number;
-  initialOdometerAt: string;
-  odometer: number;
-  odometerAt: string;
+  initialOdometer: number | null;
+  initialOdometerAt: string | null;
+  odometer: number | null;
+  odometerAt: string | null;
+}
+export interface Trailer {
+  id: string;
+  plate: string;
+  label: string;
+  active: boolean;
+  assignedTruckId: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  truck?: { id: string; plate: string; label: string } | null;
 }
 export interface Driver {
   id: string;
@@ -40,6 +51,7 @@ export interface Trip {
   id: string;
   driverId: string;
   truckId: string;
+  trailerId: string | null;
   origin: string;
   destination: string;
   departureAt: string;
@@ -47,6 +59,7 @@ export interface Trip {
   startKm: number;
   endKm: number;
   distanceKm: number;
+  controlCount: number | null;
   allowance: string | number | null;
   notes: string | null;
   status: "ACTIVE" | "CANCELLED";
@@ -55,6 +68,7 @@ export interface Trip {
   version: number;
   driver: { id: string; name: string };
   truck: { id: string; plate: string; label: string };
+  trailer: { id: string; plate: string; label: string } | null;
 }
 export interface TripList {
   items: Trip[];
@@ -69,6 +83,7 @@ export interface Obligation {
   title: string;
   kind: "SERVICE" | "DOCUMENT";
   truckId: string | null;
+  trailerId: string | null;
   driverId: string | null;
   dueDate: string | null;
   dueKm: number | null;
@@ -83,7 +98,9 @@ export interface Obligation {
   status: ObligationStatus;
   daysRemaining: number | null;
   kmRemaining: number | null;
+  odometerMissing: boolean;
   truck?: Truck | null;
+  trailer?: Trailer | null;
   driver?: { id: string; name: string } | null;
   lastPerformedAt?: string | null;
   lastOdometer?: number | null;
