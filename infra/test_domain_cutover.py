@@ -2,7 +2,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import domain_cutover as domains
 
@@ -40,6 +40,30 @@ class DomainTests(unittest.TestCase):
         with patch.object(domains.socket, 'getaddrinfo', return_value=records(domains.IP)) as lookup:
             domains.dns_ready()
             self.assertEqual([call.args[0] for call in lookup.call_args_list], list(domains.NAMES))
+
+    def test_waits_for_new_nginx_workers_on_loopback_and_public_address(self):
+        replies = [(False, 'HTTP 404'), (False, 'HTTP 404'), (True, 'HTTP 200'), (True, 'HTTP 200')]
+        with (patch.object(domains, 'challenge_response', side_effect=replies) as probe,
+              patch.object(domains.time, 'sleep') as sleep):
+            domains.check_challenge(domains.FRONT, 'fixture')
+        self.assertEqual(probe.call_args_list, [call(domains.FRONT, 'fixture', local=True), call(domains.FRONT, 'fixture')] * 2)
+        sleep.assert_called_once_with(1)
+
+    def test_challenge_timeout_contains_host_and_status_but_not_body(self):
+        with (patch.object(domains.time, 'monotonic', side_effect=[0, 26]),
+              patch.object(domains, 'challenge_response', side_effect=[(True, 'HTTP 200'), (False, 'HTTP 404')])):
+            with self.assertRaisesRegex(RuntimeError, r'HTTP-01 de transporte-tomasini.com.*VPS: HTTP 200.*público: HTTP 404') as caught:
+                domains.check_challenge(domains.FRONT, 'fixture')
+        self.assertNotIn('fixture', str(caught.exception))
+
+    def test_challenge_requires_exact_content_and_no_redirect(self):
+        with patch.object(domains.subprocess, 'run', return_value=Mock(returncode=0, stdout=b'wrong\n200')) as curl:
+            self.assertEqual(domains.challenge_response(domains.API, 'fixture', local=True), (False, 'HTTP 200 con contenido diferente'))
+            args = curl.call_args.args[0]
+            self.assertIn(domains.API + ':80:127.0.0.1', args)
+            self.assertNotIn('-L', args)
+        with patch.object(domains.subprocess, 'run', return_value=Mock(returncode=0, stdout=b'fixture\n200')):
+            self.assertEqual(domains.challenge_response(domains.API, 'fixture'), (True, 'HTTP 200'))
 
     def test_changes_only_origin_preserving_private_configuration_bytes(self):
         old = f'APP_ORIGIN=https://{domains.LEGACY}'.encode()

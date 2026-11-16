@@ -66,9 +66,14 @@ cd "$stage"
 for name in domain_cutover.py install_vps.py; do /usr/bin/install -m 600 "__SOURCE__/$name" "$name"; done
 echo "__SCRIPT__  domain_cutover.py" | /usr/bin/sha256sum --check --status
 echo "__CORE__  install_vps.py" | /usr/bin/sha256sum --check --status
-/usr/bin/python3 -I -B "$stage/domain_cutover.py" --core-sha "__CORE__" __ACTION__
+status=0
+/usr/bin/python3 -I -B "$stage/domain_cutover.py" --core-sha "__CORE__" __ACTION__ > "$stage/result.txt" 2>&1 || status=$?
+/usr/bin/cat "$stage/result.txt"
+# The helper emits only its controlled result. SSH, sudo and terminal input are never recorded.
+/usr/sbin/runuser -u mozzi -- /usr/bin/tee "__SOURCE__/result.txt" < "$stage/result.txt" > /dev/null
+test "$status" -eq 0 || exit "$status"
 cd /
-/usr/bin/rm -- "$stage/domain_cutover.py" "$stage/install_vps.py"
+/usr/bin/rm -- "$stage/domain_cutover.py" "$stage/install_vps.py" "$stage/result.txt"
 /usr/bin/rmdir -- "$stage"
 '
 '@
@@ -77,7 +82,10 @@ cd /
   Set-Stage 'awaiting_sudo_or_installing'
   Write-Host 'Ingresá la contraseña de sudo en la terminal SSH si la VPS la solicita.'
   & ssh @sshOptions -t $target $command
-  Assert-Exit 'La VPS no confirmó la operación. Revisá la salida antes de reintentar.'
+  $installExit = $LASTEXITCODE
+  & scp @sshOptions -o BatchMode=yes -- ("${target}:" + $remote + '/result.txt') (Join-Path $directory 'result.txt')
+  if ($installExit -ne 0) { throw 'La VPS detuvo la operación. Si llegó al configurador, el resultado está en result.txt.' }
+  Assert-Exit 'La VPS confirmó la operación pero no se pudo descargar el resultado.'
   Set-Stage 'verified'
   Write-Host 'Operación de dominios verificada.' -ForegroundColor Green
 } catch {

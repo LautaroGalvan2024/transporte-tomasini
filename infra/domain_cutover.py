@@ -142,6 +142,35 @@ def dns_ready():
         require(addresses == {IP}, f'{host} debe resolver únicamente a {IP} antes del corte.')
 
 
+def challenge_response(host, token, local=False):
+    command = ['curl', '-sS', '--noproxy', '*', '--connect-timeout', '3', '--max-time', '5',
+               '--max-filesize', '65536', '-w', '\n%{http_code}']
+    if local:
+        command += ['--resolve', f'{host}:80:127.0.0.1']
+    command.append(f'http://{host}/.well-known/acme-challenge/{token}')
+    result = subprocess.run(command, capture_output=True, env=RUN_ENV, timeout=8, cwd='/')
+    body, _, status = result.stdout.rpartition(b'\n')
+    if result.returncode:
+        return False, f'curl {result.returncode}'
+    if status == b'200':
+        return (True, 'HTTP 200') if body == token.encode() else (False, 'HTTP 200 con contenido diferente')
+    return False, ('HTTP ' + status.decode('ascii') if len(status) == 3 and status.isdigit() else 'respuesta inválida')
+
+
+def check_challenge(host, token):
+    # systemctl reload returns after sending HUP. Existing workers may still
+    # serve the previous virtual host while Nginx starts its new generation.
+    deadline = time.monotonic() + 25
+    while True:
+        local_ok, local_status = challenge_response(host, token, local=True)
+        public_ok, public_status = challenge_response(host, token)
+        if local_ok and public_ok:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f'Falló HTTP-01 de {host}. VPS: {local_status}. DNS público: {public_status}.')
+        time.sleep(1)
+
+
 def obtain_cert():
     root = BASE / 'acme'
     challenge = root / 'webroot/.well-known/acme-challenge'
@@ -157,8 +186,7 @@ def obtain_cert():
     try:
         path.chmod(0o644)
         for host in NAMES:
-            require(run('curl', '-fsS', '--max-time', '12', f'http://{host}/.well-known/acme-challenge/{token}') == token,
-                    'HTTP-01 no responde en ' + host)
+            check_challenge(host, token)
     finally:
         path.unlink()
     domain_args = [arg for host in NAMES for arg in ('-d', host)]
