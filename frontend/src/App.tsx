@@ -56,6 +56,7 @@ import {
 } from "./pages/Admin";
 
 import { Brand } from "./Brand";
+import { InstalledVersion } from "./FrontendVersion";
 import { JoinPage } from "./pages/Join";
 const destinations = [
   { id: "home", label: "Inicio", Icon: House },
@@ -622,6 +623,7 @@ function Login({
           <button className="login-help" onClick={() => setHelp(true)}>
             ¿Necesitás ayuda para ingresar?
           </button>
+          <InstalledVersion />
         </div>
       </section>
       {help && (
@@ -841,6 +843,7 @@ function Account({
             <LogOut size={18} />
             Cerrar sesión
           </button>
+          <InstalledVersion />
         </section>
         <form className="panel account-form" onSubmit={submit}>
           <div className="section-heading">

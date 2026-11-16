@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5175 --strictPort",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test": "node --test tests/build-version.test.mjs"
   },
   "dependencies": {
     "react": "19.3.0",
