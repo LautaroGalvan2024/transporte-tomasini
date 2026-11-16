@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { strFromU8, unzipSync } from "fflate";
-import { mileageReport, type MileageTrip } from "../src/mileage-report.js";
+import {
+  mileageReport,
+  monthlyMileageReport,
+  type MileageTrip,
+} from "../src/mileage-report.js";
 
 const trip: MileageTrip = {
   driverId: "driver-a",
@@ -103,4 +107,47 @@ test("filtros sin viajes devuelven un formulario vacío y los rangos excesivos s
     driverId: String(i),
   }));
   assert.throws(() => mileageReport(oversized), /Acotá el período/);
+});
+
+test("el mes completo cabe en una hoja con patente por viaje y totales mensuales", async () => {
+  const trips = Array.from({ length: 30 }, (_, index) => ({
+    ...trip,
+    truck: { plate: index % 2 ? "QA002ZZ" : "QA001ZZ" },
+    destination: "Localidad de destino con un recorrido largo",
+    endKm: trip.startKm + index + 1,
+    controlCount: index === 1 ? null : index,
+  }));
+  const files = unzipSync(await monthlyMileageReport(trips));
+  assert.deepEqual(
+    Object.keys(files).filter((name) =>
+      /^xl\/worksheets\/sheet\d+\.xml$/.test(name),
+    ),
+    ["xl/worksheets/sheet1.xml"],
+  );
+  const workbook = strFromU8(files["xl/workbook.xml"]);
+  const sheet = strFromU8(files["xl/worksheets/sheet1.xml"]);
+  const strings = strFromU8(files["xl/sharedStrings.xml"]);
+  assert.match(workbook, /_xlnm.Print_Titles[^>]*>'Viajes del mes'!\$1:\$4/);
+  assert.match(sheet, /fitToWidth="1" fitToHeight="0"/);
+  assert.match(strings, /CONVENCIÓN COLECTIVA/);
+  assert.match(strings, /FIRMA DEL TRABAJADOR/);
+  assert.match(strings, /Patente/);
+  assert.doesNotMatch(strings, /N° DE PATENTE/);
+  const sharedStrings = [
+    ...strings.matchAll(/<si><t[^>]*>([\s\S]*?)<\/t><\/si>/g),
+  ].map((match) => match[1]);
+  for (const [index, item] of trips.entries()) {
+    const row = index + 5;
+    assert.match(sheet, new RegExp(`<c r="G${row}"[^>]*><v>${index + 1}</v>`));
+    assert.match(
+      sheet,
+      new RegExp(
+        `<c r="M${row}"[^>]* t="s"><v>${sharedStrings.indexOf(item.truck.plate)}</v>`,
+      ),
+    );
+  }
+  assert.match(sheet, /<c r="J5"[^>]*><v>0<\/v>/);
+  assert.match(sheet, /<c r="J6"[^>]*\/>/);
+  assert.match(sheet, /<c r="G35"[^>]*><f>[^<]*SUM\(G5:G34\)/);
+  assert.match(sheet, /COUNT\(J5:J34\)=COUNT\(A5:A34\)/);
 });

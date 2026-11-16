@@ -184,3 +184,9 @@ export const tripQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
 });
+export const monthlyReportQuery = z.object({
+  driverId: uuid,
+  month: z
+    .string()
+    .regex(/^(?!0000)\d{4}-(0[1-9]|1[0-2])$/, "Seleccioná un mes válido."),
+});

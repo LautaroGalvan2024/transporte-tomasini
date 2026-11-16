@@ -4,6 +4,7 @@ Respuestas JSON directas. Errores `{error:{message,code?,fields?:Record<string,s
 
 - POST /api/auth/login {username,password} => User; GET /auth/me => User; POST /auth/logout => 204; POST /auth/password {currentPassword,newPassword} => 204.
 - GET /dashboard => Dashboard.
+- `GET /api/trips/export?format=monthly&driverId=<uuid>&month=AAAA-MM` descarga la planilla mensual para el contador (administración). Incluye una fila por viaje vigente, pendiente o revisado, según el mes de salida en Argentina. Devuelve un XLSX con una sola pestaña y orden cronológico. Una selección inválida devuelve 400 y un mes sin viajes devuelve 404. La descarga mensual es independiente de los filtros y la paginación del listado.
 - GET /trucks => {items:Truck[]}; POST /trucks {plate,label,initialOdometer?,initialOdometerAt?} => Truck; PATCH /trucks/:id {plate?,label?,active?} => Truck. Lectura inicial opcional: ambos valores informados o ambos nulos/omitidos, incluido cero como lectura válida.
 - GET /drivers => {items:Driver[]} (chofer obtiene solo su perfil); POST /drivers {name,username,password,phone?,assignedTruckId?} => Driver; PATCH /drivers/:id {name?,username?,phone?,assignedTruckId?,active?} => Driver; POST /drivers/:id/password {password} => 204 (provisoria, revoca sesiones).
 - GET /trips?from=YYYY-MM-DD&to=YYYY-MM-DD&driverId=&truckId=&trailerId=&reviewed=yes|no&page=&pageSize= => TripList. Total y sumas sobre TODO el filtro, no solo página; activos por defecto.

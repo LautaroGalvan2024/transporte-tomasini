@@ -2,12 +2,14 @@ import { Router, type Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { getDb, lockTrucks, transaction } from "./db.js";
+import { BUSINESS_TIMEZONE } from "./config.js";
 import { currentUser, requireAdmin } from "./auth.js";
 import { ensure } from "./errors.js";
 import {
   tripCreate,
   tripUpdate,
   tripQuery,
+  monthlyReportQuery,
   versionBody,
   cancelBody,
   uuid,
@@ -23,7 +25,7 @@ import {
   activeTruck,
 } from "./models.js";
 import writeXlsxFile from "write-excel-file/node";
-import { mileageReport } from "./mileage-report.js";
+import { mileageReport, monthlyMileageReport } from "./mileage-report.js";
 import {
   activeTrailer,
   lockTrailers,
@@ -71,6 +73,20 @@ function tripWhere(req: Request) {
   };
   return { input, where };
 }
+
+async function monthlyTripWhere(
+  driverId: string,
+  month: string,
+): Promise<Prisma.TripWhereInput> {
+  // Return UTC wall times so the raw-query date decoder is independent of
+  // the database session's TimeZone when reading each bound.
+  const [bounds] = await getDb().$queryRaw<{ gte: Date; lt: Date }[]>`
+    SELECT (month_start AT TIME ZONE ${BUSINESS_TIMEZONE}) AT TIME ZONE 'UTC' AS gte,
+           ((month_start + interval '1 month') AT TIME ZONE ${BUSINESS_TIMEZONE}) AT TIME ZONE 'UTC' AS lt
+    FROM (SELECT ${month + "-01"}::timestamp AS month_start) AS calendar`;
+  return { driverId, status: "ACTIVE", departureAt: bounds };
+}
+
 export function tripsRouter() {
   const router = Router();
   router.get("/", async (req, res) => {
@@ -108,13 +124,17 @@ export function tripsRouter() {
     res.json(result);
   });
   router.get("/export", requireAdmin, async (req, res) => {
-    const { where } = tripWhere(req);
     const format = req.query.format ?? "form";
     ensure(
-      format === "form" || format === "detail",
+      format === "form" || format === "detail" || format === "monthly",
       400,
       "Formato de reporte inválido.",
     );
+    const monthly =
+      format === "monthly" ? monthlyReportQuery.parse(req.query) : null;
+    const where = monthly
+      ? await monthlyTripWhere(monthly.driverId, monthly.month)
+      : tripWhere(req).where;
     const rows = await getDb().trip.findMany({
       where,
       select: {
@@ -135,8 +155,23 @@ export function tripsRouter() {
         notes: true,
       },
       orderBy: [{ departureAt: "asc" }, { id: "asc" }],
-      take: 50_001,
+      take: monthly ? undefined : 50_001,
     });
+    if (monthly) {
+      ensure(
+        rows.length,
+        404,
+        "El chofer seleccionado no tiene viajes en ese mes.",
+      );
+      const name =
+        rows[0].driver.user.name
+          .normalize("NFC")
+          .replace(/[^\p{L}\p{N}]+/gu, "-")
+          .replace(/^-|-$/g, "") || "chofer";
+      const buffer = await monthlyMileageReport(rows);
+      res.attachment(`Tomasini-${name}-${monthly.month}.xlsx`).send(buffer);
+      return;
+    }
     ensure(
       rows.length <= 50_000,
       400,
