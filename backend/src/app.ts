@@ -94,7 +94,7 @@ export function createApp() {
       }));
       app.get("/{*path}", (_req, res) => {
         res.setHeader("Cache-Control", "no-store");
-        res.sendFile(`${dir}/index.html`);
+        res.sendFile("index.html", { root: dir });
       });
     }
   }

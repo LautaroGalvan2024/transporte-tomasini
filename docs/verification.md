@@ -1,5 +1,11 @@
 # Verificación de la primera versión
 
+## Aviso de actualización del frontend — 16 de noviembre de 2026
+
+- Chromium probó dos builds con huellas distintas en escritorio y celular. La primera visita abrió normalmente. Tanto una pestaña con el build anterior como un usuario que volvió más tarde tuvieron que pulsar «Recargar página». La ruta, la sesión y el fragmento de invitación se conservaron tras la recarga.
+- El aviso mantuvo el foco cuando había otro diálogo abierto. Al cancelar el aviso nativo de salida durante la carga de un viaje se conservó el borrador. Se comprobaron la recuperación de red, el regreso a una pestaña oculta y el funcionamiento con almacenamiento de solo lectura.
+- En el servidor Express de producción con PostgreSQL local aislado, el manifiesto y las tres rutas de entrada probadas devolvieron la misma versión y `Cache-Control: no-store`. Las capturas están en `output/qa/version/`.
+
 ## Planilla mensual del contador — 16 de noviembre de 2026
 
 - Con PostgreSQL exclusivo `tomasini_test`, pasaron las 57 pruebas de integración. La exportación cubre cambios de mes según la zona horaria argentina, chofer, estado de revisión, anulaciones y viajes en más de un camión.
