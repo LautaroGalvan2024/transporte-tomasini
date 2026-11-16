@@ -36,6 +36,8 @@ Solo funciona en la base local `tomasini_dev` vacía. Crea tres camiones, tres c
 
 ## Uso
 
+Cuando cambia el frontend, la aplicación muestra «Recargar página» al detectar la actualización o al volver a ingresar desde el mismo navegador. Pulsar el botón carga la versión publicada y conserva la ruta y la sesión.
+
 - **Chofer:** carga viajes realizados, consulta su historial y corrige registros aún no revisados. El camión habitual se ofrece por defecto; las lecturas del odómetro se confirman manualmente.
 - **Administración:** gestiona camiones, acoplados y choferes, revisa/corrige/anula viajes, mantiene vencimientos y servicios, consulta historial y descarga Excel.
 - **Controles:** al cargar un viaje, el chofer o el administrativo indica cuántos controles de descarga se realizaron. El detalle conserva la diferencia entre cero y un viaje anterior sin dato.

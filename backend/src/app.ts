@@ -2,6 +2,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConfig } from "./config.js";
 import { assertDatabaseScope } from "./db.js";
@@ -82,9 +83,17 @@ export function createApp() {
   if (cfg.production) {
     const dir = fileURLToPath(new URL("../../frontend/dist/", import.meta.url));
     if (existsSync(dir)) {
-      app.use(express.static(dir, { index: false, maxAge: "1h" }));
+      app.use(express.static(dir, {
+        index: false,
+        maxAge: "1h",
+        setHeaders(response, path) {
+          if (["index.html", "frontend-version.json"].includes(basename(path))) {
+            response.setHeader("Cache-Control", "no-store");
+          }
+        },
+      }));
       app.get("/{*path}", (_req, res) => {
-        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Cache-Control", "no-store");
         res.sendFile(`${dir}/index.html`);
       });
     }

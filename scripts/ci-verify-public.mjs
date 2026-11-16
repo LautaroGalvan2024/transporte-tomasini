@@ -13,6 +13,13 @@ const get = (path) => fetch(site + path, {
 });
 async function verify() {
   const home = readFileSync(fileURLToPath(new URL("index.html", dist)));
+  const { version } = JSON.parse(readFileSync(new URL("frontend-version.json", dist), "utf8"));
+  assert.match(version, /^[a-f0-9]{64}$/);
+  assert.ok(home.includes(`name="tomasini-frontend-version" content="${version}"`), "El HTML del build debe identificar su versión.");
+  const manifest = await get("/frontend-version.json");
+  assert.equal(manifest.status, 200);
+  assert.match(manifest.headers.get("cache-control") ?? "", /\bno-store\b/i);
+  assert.equal((await manifest.json()).version, version, "La versión pública difiere del build.");
   const assets = [...home.toString("utf8").matchAll(/(?:src|href)="(\/assets\/[A-Za-z0-9_.-]+\.(?:css|js))"/g)].map(m => m[1]);
   assert.ok(assets.some(p => p.endsWith(".js")) && assets.some(p => p.endsWith(".css")), "El build no tiene los recursos esperados.");
   for (const path of ["/", ...new Set(assets)]) {
