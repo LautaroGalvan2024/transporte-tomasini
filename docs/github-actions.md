@@ -53,7 +53,7 @@ El `.tar.gz` viaja por stdin, sin SCP ni shell remota. SSH usa host verificado, 
 
 El receptor coteja el esquema y el historial ya aplicado con el release activo. Los cambios de código y los nuevos campos opcionales descritos más abajo se publican sin contraseña ni sesión de consola. Crea y valida un respaldo antes de modificar el esquema o activar la versión, cambia `current` de forma atómica y reinicia únicamente `tomasini.service`. Comprueba la continuidad de Mozzi y Horizontes. Si falla la activación, puede restituir el código anterior porque las columnas nuevas son opcionales; no deshace una migración confirmada ni restaura la base sobre datos posteriores.
 
-El último paso de Actions comprueba desde fuera de la VPS que el HTML, JavaScript y CSS públicos coinciden con el build, que `/api/ready` responde y que el Excel exige sesión.
+El último paso de Actions compara el HTML, JavaScript y CSS públicos de `transporte-tomasini.com` con el build del commit. Comprueba tanto allí como en `transporte-tomasini-api.com` el estado JSON de `/api/ready` y el rechazo de una descarga mensual sin sesión. También verifica que el dominio de la API responda 404 en la raíz y que los alias `www` y el enlace anterior redirijan al dominio correspondiente con la ruta y los parámetros originales.
 
 El resumen de Actions muestra únicamente commit, SHA del release y versión anterior confirmados por el receptor. Si SSH se interrumpe o falta confirmación, revisar el recibo y diagnóstico privado en la VPS antes de reintentar: una interrupción del runner no demuestra que la publicación remota haya fallado. No reutilizar el instalador inicial ni restaurar bases automáticamente.
 

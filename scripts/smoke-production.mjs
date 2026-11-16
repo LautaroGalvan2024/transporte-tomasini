@@ -9,8 +9,8 @@ import {
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HOST = "tomasini.72-60-50-213.sslip.io";
-const ORIGIN = `https://${HOST}`;
+const initialHosts = new Set(["transporte-tomasini.com", "tomasini.72-60-50-213.sslip.io"]);
+let origin;
 const SESSION_NAME = "__Host-tomasini_session";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let reportPath;
@@ -19,7 +19,7 @@ let cookie = "";
 let credential;
 let failure = false;
 const report = {
-  target: ORIGIN,
+  target: null,
   startedAt: new Date().toISOString(),
   status: "pending",
   checks: [],
@@ -48,16 +48,16 @@ async function request(
   path,
   { method = "GET", body, authenticated = false } = {},
 ) {
-  const url = new URL(path, ORIGIN);
+  const url = new URL(path, origin);
   requireCheck(
-    url.origin === ORIGIN &&
+    url.origin === origin &&
       url.protocol === "https:" &&
       !url.username &&
       !url.password,
   );
   const headers = { Accept: "application/json, text/html;q=0.8, */*;q=0.5" };
   if (method !== "GET") {
-    headers.Origin = ORIGIN;
+    headers.Origin = origin;
     headers["X-Tomasini-Request"] = "1";
     headers["Content-Type"] = "application/json";
   }
@@ -109,9 +109,9 @@ function attributes(tag) {
   );
 }
 function assetPath(value, extension) {
-  const url = new URL(value, ORIGIN);
+  const url = new URL(value, origin);
   requireCheck(
-    url.origin === ORIGIN &&
+    url.origin === origin &&
       url.pathname.startsWith("/assets/") &&
       url.pathname.endsWith(extension) &&
       !url.username &&
@@ -156,11 +156,13 @@ try {
   );
   const installed = json(join(evidence, "installed.json"));
   requireCheck(
-    installed.host === HOST &&
+    initialHosts.has(installed.host) &&
       installed.database === "tomasini_prod" &&
       installed.verification?.publicReadiness === 200 &&
       installed.verification?.existingApplicationsPreserved === true,
   );
+  origin = `https://${installed.host}`;
+  report.target = origin;
   requireCheck(
     typeof installed.release === "string" &&
       /^[a-f0-9]{64}$/.test(installed.release) &&

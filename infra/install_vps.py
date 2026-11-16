@@ -30,7 +30,8 @@ UNIT = Path('/etc/systemd/system/tomasini.service')
 PORT = 3102
 DATABASE = 'tomasini_prod'
 ROLES = ('tomasini_prod_app', 'tomasini_prod_migrator', 'tomasini_prod_backup')
-HOST = 'tomasini.72-60-50-213.sslip.io'
+HOST = ('transporte-tomasini.com' if (BASE / 'private/domain-cutover/active.json').is_file()
+        else 'tomasini.72-60-50-213.sslip.io')
 SAFE_ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8'}
 PRIVATE_VALUES: list[str] = []
 
