@@ -48,6 +48,7 @@ import {
   EmptyState,
   Field,
   Modal,
+  PasswordField,
   StatusBadge,
   formatDate,
   formatKm,
@@ -354,7 +355,7 @@ function DueSummary({ obligation }: { obligation: Obligation }) {
 
 export function AdminDashboard({ onNavigate }: PageProps) {
   const state = useLoad<Dashboard>("/dashboard");
-  const [tab, setTab] = useState("attention");
+  const [tab, setTab] = useState("trips");
   const pageSize = usePageSize(440, 84);
   const pending =
     state.data?.obligations.filter(
@@ -419,8 +420,8 @@ export function AdminDashboard({ onNavigate }: PageProps) {
             <div className="admin-section-toolbar">
               <div className="admin-tabs" aria-label="Resumen de actividad">
                 {[
-                  ["attention", "Vencimientos"],
                   ["trips", "Últimos viajes"],
+                  ["attention", "Vencimientos"],
                   ["fleet", "Flota"],
                 ].map(([key, label]) => (
                   <button
@@ -1719,21 +1720,17 @@ function DriverForm({
           </select>
         </Field>
         {!driver && (
-          <Field
+          <PasswordField
             label="Contraseña provisoria"
             hint="Al ingresar por primera vez, el chofer deberá cambiarla. Mínimo 12 caracteres."
             error={form.fields.password}
-          >
-            <input
-              required
-              minLength={12}
-              maxLength={128}
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
+            required
+            minLength={12}
+            maxLength={128}
+            autoComplete="new-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
         )}
         <FormFooter
           busy={form.busy}
@@ -1785,30 +1782,24 @@ function PasswordForm({
           Sus sesiones actuales se cerrarán y deberá cambiarla al ingresar.
         </p>
         <FormError message={form.message} />
-        <Field
+        <PasswordField
           label="Nueva contraseña provisoria"
           error={form.fields.password}
           hint="Mínimo 12 caracteres."
-        >
-          <input
-            required
-            minLength={12}
-            maxLength={128}
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </Field>
-        <Field label="Repetir contraseña">
-          <input
-            required
-            type="password"
-            autoComplete="new-password"
-            value={repeat}
-            onChange={(event) => setRepeat(event.target.value)}
-          />
-        </Field>
+          required
+          minLength={12}
+          maxLength={128}
+          autoComplete="new-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        <PasswordField
+          label="Repetir contraseña"
+          required
+          autoComplete="new-password"
+          value={repeat}
+          onChange={(event) => setRepeat(event.target.value)}
+        />
         <FormFooter
           busy={form.busy}
           onClose={onClose}

@@ -1,0 +1,15 @@
+.shortcut-instructions ol {
+  margin: 0 0 1.25rem;
+  padding-inline-start: 1.5rem;
+  line-height: 1.6;
+}
+
+.shortcut-instructions li + li {
+  margin-top: 0.65rem;
+}
+
+.shortcut-instructions li::marker,
+.shortcut-instructions a {
+  color: var(--navy);
+  font-weight: 700;
+}

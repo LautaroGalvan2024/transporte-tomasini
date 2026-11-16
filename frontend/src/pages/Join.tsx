@@ -3,14 +3,12 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  Eye,
-  EyeOff,
   LoaderCircle,
   UserRound,
 } from "lucide-react";
 import { Brand } from "../Brand";
 import { ApiError, send } from "../api";
-import { Field, Loading } from "../ui";
+import { Field, Loading, PasswordField } from "../ui";
 import type { User } from "../types";
 
 type Preview = {
@@ -45,7 +43,6 @@ export function JoinPage({
     [password, setPassword] = useState(""),
     [repeat, setRepeat] = useState("");
   const [step, setStep] = useState(0),
-    [visible, setVisible] = useState(false),
     [busy, setBusy] = useState(false),
     [done, setDone] = useState(false),
     [error, setError] = useState(""),
@@ -287,43 +284,25 @@ export function JoinPage({
                   </>
                 ) : (
                   <>
-                    <Field
+                    <PasswordField
                       label="Contraseña"
                       error={fields.password}
                       hint="Al menos 12 caracteres. Podés usar varias palabras."
-                    >
-                      <span className="password-field">
-                        <input
-                          type={visible ? "text" : "password"}
-                          value={password}
-                          maxLength={128}
-                          autoComplete="new-password"
-                          onChange={(e) => setPassword(e.target.value)}
-                          disabled={busy || uncertain}
-                        />
-                        <button
-                          type="button"
-                          aria-label={
-                            visible
-                              ? "Ocultar contraseña"
-                              : "Mostrar contraseña"
-                          }
-                          onClick={() => setVisible((v) => !v)}
-                        >
-                          {visible ? <EyeOff size={19} /> : <Eye size={19} />}
-                        </button>
-                      </span>
-                    </Field>
-                    <Field label="Repetir contraseña" error={fields.repeat}>
-                      <input
-                        type={visible ? "text" : "password"}
-                        value={repeat}
-                        maxLength={128}
-                        autoComplete="new-password"
-                        onChange={(e) => setRepeat(e.target.value)}
-                        disabled={busy || uncertain}
-                      />
-                    </Field>
+                      value={password}
+                      maxLength={128}
+                      autoComplete="new-password"
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={busy || uncertain}
+                    />
+                    <PasswordField
+                      label="Repetir contraseña"
+                      error={fields.repeat}
+                      value={repeat}
+                      maxLength={128}
+                      autoComplete="new-password"
+                      onChange={(e) => setRepeat(e.target.value)}
+                      disabled={busy || uncertain}
+                    />
                   </>
                 )}
                 {error && (

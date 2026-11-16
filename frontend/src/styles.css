@@ -620,6 +620,7 @@ strong {
   bottom: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   border-right: 1px solid var(--line);
   background: #fff;
   z-index: 30;
@@ -793,17 +794,15 @@ strong {
 }
 .online-status {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   font-size: 12px;
   font-weight: 650;
-  color: #7e998d;
+  white-space: nowrap;
 }
-.online-status i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #5a9b7d;
+.online-status .installed-version {
+  margin: 0;
 }
 .top-avatar {
   width: 34px;
@@ -1426,13 +1425,19 @@ strong {
 .password-field input {
   padding-right: 52px;
 }
+.password-field input::-ms-reveal {
+  display: none;
+}
 .password-field button {
   position: absolute;
   right: 3px;
-  top: 2px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 48px;
-  height: 48px;
-  color: #94a4b4;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: #536779;
 }
 .login-submit {
   width: 100%;
@@ -2524,18 +2529,18 @@ strong {
     padding: 27px 24px 30px;
   }
   .mobile-nav {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
     height: calc(72px + env(safe-area-inset-bottom));
-    padding: 5px 20px calc(5px + env(safe-area-inset-bottom));
+    padding: 5px 8px calc(5px + env(safe-area-inset-bottom));
     background: #ffffffed;
     backdrop-filter: blur(15px);
     border-top: 1px solid #e0e7ef;
     z-index: 40;
-    justify-content: space-around;
     box-shadow: 0 -4px 25px #19365003;
   }
   .mobile-nav > button {
@@ -2544,9 +2549,12 @@ strong {
     align-items: center;
     justify-content: center;
     gap: 5px;
-    width: 90px;
+    min-width: 0;
+    padding: 0 2px;
+    line-height: 1.2;
+    text-wrap: balance;
     min-height: 58px;
-    color: #9eacb9;
+    color: #536779;
     border-radius: 12px;
     font-size: 12px;
     font-weight: 650;
@@ -3630,9 +3638,6 @@ strong {
 }
 .online-status.offline {
   color: #a15b3e;
-}
-.online-status.offline i {
-  background: #b57b48;
 }
 .login-story-footer {
   color: #aac0d0;

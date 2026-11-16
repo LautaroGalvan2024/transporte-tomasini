@@ -41,7 +41,9 @@ function rememberVersion(version: string) {
 }
 
 export function InstalledVersion() {
-  return installed && (
+  if (!installed)
+    return import.meta.env.DEV ? <small className="installed-version">Versión local</small> : null;
+  return (
     <small className="installed-version" title={installed}>Versión {installed.slice(0, 8)}</small>
   );
 }
