@@ -507,6 +507,9 @@
     border-color 0.15s,
     box-shadow 0.15s;
 }
+.admin-form .password-field input:not([type="checkbox"]) {
+  padding-right: 52px;
+}
 .admin-form input:focus,
 .admin-form select:focus,
 .admin-form textarea:focus,

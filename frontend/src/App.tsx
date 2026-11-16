@@ -12,8 +12,7 @@ import {
   ChevronRight,
   CircleCheck,
   Clock3,
-  Eye,
-  EyeOff,
+  Download,
   Gauge,
   House,
   LogOut,
@@ -41,6 +40,7 @@ import {
   formatKm,
   Loading,
   Modal,
+  PasswordField,
   StatusBadge,
 } from "./ui";
 import { useData } from "./useData";
@@ -57,7 +57,13 @@ import {
 
 import { Brand } from "./Brand";
 import { InstalledVersion } from "./FrontendVersion";
+import { useInstallShortcut } from "./InstallShortcut";
 import { JoinPage } from "./pages/Join";
+const shortcutItem = {
+  id: "install-shortcut",
+  label: "Crear acceso directo",
+  Icon: Download,
+};
 const destinations = [
   { id: "home", label: "Inicio", Icon: House },
   { id: "trips", label: "Viajes", Icon: Route },
@@ -71,6 +77,7 @@ const destinations = [
 const pathnamePage = () => location.pathname.split("/")[1] || "home";
 
 export function App() {
+  const shortcut = useInstallShortcut();
   const [user, setUser] = useState<User | null>(null),
     [checking, setChecking] = useState(true),
     [page, setPage] = useState(pathnamePage),
@@ -229,6 +236,27 @@ export function App() {
           { id: "trips", label: "Mis viajes", Icon: Route },
         ];
   const isForm = page === "new-trip";
+  function menuButton({ id, label, Icon }: (typeof destinations)[number], mobile: boolean) {
+    const isShortcut = id === shortcutItem.id;
+    const active = !isShortcut && (id === "menu" ? mobileMenu : page === id);
+    return (
+      <button
+        key={id}
+        type="button"
+        className={`${mobile ? "" : "nav-item"}${active ? " active" : ""}`.trim()}
+        disabled={isShortcut && shortcut.busy}
+        onClick={() => {
+          if (isShortcut) void shortcut.open();
+          else if (id === "menu") setMobileMenu((open) => !open);
+          else navigate(id);
+        }}
+      >
+        <Icon size={mobile ? 23 : 20} aria-hidden="true" />
+        <span>{label}</span>
+        {!mobile && active && <span className="nav-dot" />}
+      </button>
+    );
+  }
   function content() {
     if (user?.mustChangePassword)
       return (
@@ -328,17 +356,7 @@ export function App() {
           <Brand />
         </button>
         <nav className="side-nav" aria-label="Navegación principal">
-          {allowed.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              className={`nav-item ${page === id ? "active" : ""}`}
-              onClick={() => navigate(id)}
-            >
-              <Icon size={20} />
-              {label}
-              {page === id && <span className="nav-dot" />}
-            </button>
-          ))}
+          {[allowed[0], shortcutItem, ...allowed.slice(1)].map((item) => menuButton(item, false))}
         </nav>
         <div className="sidebar-bottom">
           <button
@@ -378,8 +396,8 @@ export function App() {
               }).format(new Date())}
             </span>
             <span className={`online-status ${online ? "" : "offline"}`}>
-              <i />
-              {online ? "En línea" : "Sin conexión"}
+              <InstalledVersion />
+              {!online && <span role="status">Sin conexión</span>}
             </span>
             <button
               className="top-avatar"
@@ -406,26 +424,15 @@ export function App() {
             label: user.role === "ADMIN" ? "Viajes" : "Mis viajes",
             Icon: Route,
           },
+          shortcutItem,
           {
             id: user.role === "ADMIN" ? "menu" : "account",
             label: user.role === "ADMIN" ? "Más" : "Cuenta",
             Icon: user.role === "ADMIN" ? Menu : UserRound,
           },
-        ].map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            className={
-              page === id || (id === "menu" && mobileMenu) ? "active" : ""
-            }
-            onClick={() =>
-              id === "menu" ? setMobileMenu(!mobileMenu) : navigate(id)
-            }
-          >
-            <Icon size={23} />
-            <span>{label}</span>
-          </button>
-        ))}
+        ].map((item) => menuButton(item, true))}
       </nav>
+      {shortcut.dialog}
       {mobileMenu && (
         <Modal title="Administración" onClose={() => setMobileMenu(false)}>
           <nav className="mobile-menu-list">
@@ -527,7 +534,6 @@ function Login({
 }) {
   const [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
-    [visible, setVisible] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [help, setHelp] = useState(false);
@@ -579,28 +585,15 @@ function Login({
                 disabled={busy}
               />
             </Field>
-            <Field label="Contraseña">
-              <span className="password-field">
-                <input
-                  type={visible ? "text" : "password"}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Tu contraseña"
-                  required
-                  disabled={busy}
-                />
-                <button
-                  type="button"
-                  onClick={() => setVisible(!visible)}
-                  aria-label={
-                    visible ? "Ocultar contraseña" : "Mostrar contraseña"
-                  }
-                >
-                  {visible ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-              </span>
-            </Field>
+            <PasswordField
+              label="Contraseña"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Tu contraseña"
+              required
+              disabled={busy}
+            />
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -850,38 +843,30 @@ function Account({
             <h2>{required ? "Primer ingreso" : "Cambiar contraseña"}</h2>
             <LockKeyhole size={23} />
           </div>
-          <Field label="Contraseña actual">
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={current}
-              onChange={(e) => setCurrent(e.target.value)}
-              required
-            />
-          </Field>
-          <Field
+          <PasswordField
+            label="Contraseña actual"
+            autoComplete="current-password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            required
+          />
+          <PasswordField
             label="Nueva contraseña"
             hint="Usá al menos 12 caracteres. Podés combinar palabras y números."
-          >
-            <input
-              type="password"
-              minLength={12}
-              maxLength={128}
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </Field>
-          <Field label="Repetir nueva contraseña">
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={repeat}
-              onChange={(e) => setRepeat(e.target.value)}
-              required
-            />
-          </Field>
+            minLength={12}
+            maxLength={128}
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+          <PasswordField
+            label="Repetir nueva contraseña"
+            autoComplete="new-password"
+            value={repeat}
+            onChange={(e) => setRepeat(e.target.value)}
+            required
+          />
           {error && (
             <p className="form-error" role="alert">
               {error}
@@ -937,16 +922,14 @@ function Reauthenticate({
         <p>
           <strong>{user.name}</strong> · {user.username}
         </p>
-        <Field label="Contraseña">
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            disabled={busy}
-          />
-        </Field>
+        <PasswordField
+          label="Contraseña"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          disabled={busy}
+        />
         {error && (
           <p className="form-error" role="alert">
             {error}

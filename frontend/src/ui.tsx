@@ -1,4 +1,11 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import {
   X,
   Inbox,
@@ -6,6 +13,8 @@ import {
   AlertCircle,
   Clock3,
   HelpCircle,
+  Eye,
+  EyeOff,
   LoaderCircle,
 } from "lucide-react";
 import type { ObligationStatus } from "./types";
@@ -70,6 +79,61 @@ export function Field({
         <span className="field-hint">{hint}</span>
       ) : null}
     </label>
+  );
+}
+export function PasswordField({
+  label,
+  hint,
+  error,
+  ...input
+}: Omit<ComponentProps<"input">, "type" | "id"> & {
+  label: string;
+  hint?: string;
+  error?: string;
+}) {
+  const id = useId();
+  const [visible, setVisible] = useState(false);
+  const description = error || hint;
+  return (
+    <div className={`field ${error ? "has-error" : ""}`}>
+      <label className="field-label" htmlFor={id} id={`${id}-label`}>
+        {label}
+      </label>
+      <span className="password-field">
+        <input
+          {...input}
+          id={id}
+          type={visible ? "text" : "password"}
+          autoCapitalize="none"
+          spellCheck={false}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={description ? `${id}-description` : undefined}
+        />
+        <button
+          type="button"
+          disabled={input.disabled}
+          aria-label={visible ? "Ocultar contraseña" : "Mostrar contraseña"}
+          aria-describedby={`${id}-label`}
+          aria-controls={id}
+          onClick={() => setVisible((current) => !current)}
+        >
+          {visible ? (
+            <EyeOff size={20} aria-hidden="true" />
+          ) : (
+            <Eye size={20} aria-hidden="true" />
+          )}
+        </button>
+      </span>
+      {description && (
+        <span
+          id={`${id}-description`}
+          className={error ? "error-text" : "field-hint"}
+          role={error ? "alert" : undefined}
+        >
+          {description}
+        </span>
+      )}
+    </div>
   );
 }
 export function EmptyState({
