@@ -458,6 +458,15 @@ test(
           assert.equal(pending.body.status, "UNCONFIGURED");
         },
       );
+      const exportTrips = (query: string) =>
+        adminAgent
+          .get(`/api/trips/export?driverId=${first.driver!.id}&${query}`)
+          .buffer(true)
+          .parse((res, done) => {
+            const parts: Buffer[] = [];
+            res.on("data", (d) => parts.push(Buffer.from(d)));
+            res.on("end", () => done(null, Buffer.concat(parts)));
+          });
       await t.test(
         "Excel numérico y textos que no se interpretan como fórmulas",
         async () => {
@@ -465,17 +474,12 @@ test(
             (await driverAgent.get("/api/trips/export")).status,
             403,
           );
-          const exportTrips = (query: string) => adminAgent
-            .get(`/api/trips/export?driverId=${first.driver!.id}&${query}`)
-            .buffer(true)
-            .parse((res, done) => {
-              const parts: Buffer[] = [];
-              res.on("data", (d) => parts.push(Buffer.from(d)));
-              res.on("end", () => done(null, Buffer.concat(parts)));
-            });
           const form = await exportTrips(`truckId=${secondTruck.id}`);
           assert.equal(form.status, 200);
-          assert.match(form.headers["content-disposition"], /planilla-kilometraje-tomasini\.xlsx/);
+          assert.match(
+            form.headers["content-disposition"],
+            /planilla-kilometraje-tomasini\.xlsx/,
+          );
           const formFiles = unzipSync(form.body);
           const formSheet = strFromU8(formFiles["xl/worksheets/sheet1.xml"]);
           const strings = strFromU8(formFiles["xl/sharedStrings.xml"]);
@@ -493,6 +497,110 @@ test(
           assert.equal(sheet.includes("<f>"), false);
           assert.match(sheet, /1250\.5/);
           assert.ok(files["xl/workbook.xml"]);
+        },
+      );
+      await t.test(
+        "planilla mensual del chofer con todos los camiones y salida en Argentina",
+        async () => {
+          const monthlyUrl = "/api/trips/export?format=monthly";
+          assert.equal((await driverAgent.get(monthlyUrl)).status, 403);
+          assert.equal(
+            (await adminAgent.get(monthlyUrl + "&month=2008-02")).status,
+            400,
+          );
+          assert.equal(
+            (
+              await adminAgent.get(
+                monthlyUrl + `&driverId=${first.driver!.id}&month=2008-13`,
+              )
+            ).status,
+            400,
+          );
+          const empty = await adminAgent.get(
+            monthlyUrl + `&driverId=${first.driver!.id}&month=2008-02`,
+          );
+          assert.equal(empty.status, 404);
+          assert.match(empty.body.error.message, /no tiene viajes/);
+
+          // In February 2008 Buenos Aires used UTC−02:00. A 02:30 UTC
+          // departure on February 1 belongs to February, and 02:00 UTC
+          // on March 1 is already outside that month's report.
+          const selectedTrips = Array.from({ length: 27 }, (_, index) => {
+            const departureAt =
+              index === 26
+                ? new Date("2008-03-01T01:59:59Z")
+                : new Date(Date.UTC(2008, 1, index + 1, 2, 30));
+            return {
+              clientRequestId: randomUUID(),
+              requestHash: "0".repeat(64),
+              createdById: first.id,
+              driverId: first.driver!.id,
+              truckId: index % 2 ? secondTruck.id : truck.id,
+              origin: "Origen mensual",
+              destination: "Destino mensual",
+              departureAt,
+              arrivalAt: new Date(departureAt.getTime() + 3_600_000),
+              startKm: 100 * index,
+              endKm: 100 * index + index + 1,
+              reviewedAt: index % 2 ? departureAt : null,
+              reviewedById: index % 2 ? admin.id : null,
+            };
+          });
+          const excluded = [
+            { departureAt: new Date("2008-02-01T01:59:59Z") },
+            { departureAt: new Date("2008-03-01T02:00:00Z") },
+            { driverId: other.driver!.id },
+            {
+              status: "CANCELLED" as const,
+              cancelledById: admin.id,
+              cancelledAt: selectedTrips[0].arrivalAt,
+              cancellationReason: "Anulado de prueba",
+            },
+          ].map((changes) => ({
+            ...selectedTrips[0],
+            ...changes,
+            arrivalAt: new Date(
+              (changes.departureAt ?? selectedTrips[0].departureAt).getTime() +
+                3_600_000,
+            ),
+            clientRequestId: randomUUID(),
+            origin: "Viaje excluido",
+          }));
+          await db.trip.createMany({
+            data: [...excluded, ...selectedTrips].reverse(),
+          });
+          const monthly = await exportTrips(
+            `format=monthly&month=2008-02&truckId=${truck.id}&page=2&pageSize=1&from=2008-02-15&to=2008-02-16&reviewed=yes`,
+          );
+          assert.equal(monthly.status, 200);
+          assert.match(
+            monthly.headers["content-disposition"],
+            /Tomasini-Chofer-Uno-2008-02\.xlsx/,
+          );
+          const monthlyFiles = unzipSync(monthly.body);
+          assert.equal(monthlyFiles["xl/worksheets/sheet2.xml"], undefined);
+          const monthlyStrings = strFromU8(
+            monthlyFiles["xl/sharedStrings.xml"],
+          );
+          assert.doesNotMatch(monthlyStrings, /Viaje excluido/);
+          assert.ok(
+            monthlyStrings.includes(secondTruck.plate) &&
+              monthlyStrings.includes(truck.plate),
+          );
+          const monthlySheet = strFromU8(
+            monthlyFiles["xl/worksheets/sheet1.xml"],
+          );
+          const firstTime = /<c r="B5"[^>]*><v>([^<]+)<\/v>/.exec(monthlySheet);
+          assert.equal(Number(firstTime?.[1]), 30 / 1440);
+          const kilometers = [
+            ...monthlySheet.matchAll(
+              /<c r="G\d+"(?![^>]* t="s")[^>]*><v>(\d+)<\/v><\/c>/g,
+            ),
+          ].map((match) => Number(match[1]));
+          assert.deepEqual(
+            kilometers,
+            selectedTrips.map((row) => row.endKm - row.startKm),
+          );
         },
       );
       await t.test(

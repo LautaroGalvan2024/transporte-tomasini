@@ -58,38 +58,51 @@ const headers = [
 const columns = [11, 7, 18, 11, 7, 18, 10.5, 10.5, 10.5, 13, 11, 14].map(
   (width) => ({ width }),
 );
+const monthlySheetName = "Viajes del mes";
 
-// The reference was printed on US Letter. Keep the header, grid and signatures on one page.
-const printOptions: NonNullable<Parameters<typeof writeXlsxFile>[1]> = {
-  fontFamily: "Calibri",
-  fontSize: 10,
-  features: [
-    {
-      files: {
-        transform: {
-          "xl/worksheets/sheet{id}.xml": {
-            transformElementAttributes(tag, attrs) {
-              if (tag === "pageSetup")
-                return {
-                  ...attrs,
-                  paperSize: 1,
-                  fitToWidth: 1,
-                  fitToHeight: 1,
-                };
-              return attrs;
+function printOptions(
+  monthly: boolean,
+): NonNullable<Parameters<typeof writeXlsxFile>[1]> {
+  return {
+    fontFamily: "Calibri",
+    fontSize: 10,
+    features: [
+      {
+        files: {
+          transform: {
+            "xl/workbook.xml": {
+              transform(xml) {
+                if (!monthly) return xml;
+                return xml.replace(
+                  "<definedNames/>",
+                  `<definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">'${monthlySheetName}'!$1:$4</definedName></definedNames>`,
+                );
+              },
             },
-            transform(xml) {
-              return xml.replace(
-                "<sheetViews>",
-                '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetViews>',
-              );
+            "xl/worksheets/sheet{id}.xml": {
+              transformElementAttributes(tag, attrs) {
+                if (tag === "pageSetup")
+                  return {
+                    ...attrs,
+                    paperSize: 1,
+                    fitToWidth: 1,
+                    fitToHeight: monthly ? 0 : 1,
+                  };
+                return attrs;
+              },
+              transform(xml) {
+                return xml.replace(
+                  "<sheetViews>",
+                  '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetViews>',
+                );
+              },
             },
           },
         },
       },
-    },
-  ],
-};
+    ],
+  };
+}
 
 function dateAndTime(instant: Date): CellObject[] {
   const date = new Date(localDate.format(instant) + "T00:00:00Z");
@@ -129,13 +142,11 @@ function grid(cells: CellObject[], height: number): Row {
     borderColor: "#000000",
     borderStyle: "thin",
     ...(i === 0 ? { leftBorderStyle: "medium" as const } : {}),
-    ...(i === headers.length - 1
-      ? { rightBorderStyle: "medium" as const }
-      : {}),
+    ...(i === cells.length - 1 ? { rightBorderStyle: "medium" as const } : {}),
   }));
 }
 
-function tripLine(trip: MileageTrip, slots: number) {
+function tripLine(trip: MileageTrip, slots: number, monthly: boolean) {
   return grid(
     [
       ...dateAndTime(trip.departureAt),
@@ -148,6 +159,7 @@ function tripLine(trip: MileageTrip, slots: number) {
       { value: trip.controlCount ?? undefined, type: Number },
       {},
       {},
+      ...(monthly ? [{ value: trip.truck.plate, type: String }] : []),
     ],
     15 * slots,
   );
@@ -163,7 +175,11 @@ function mergedRow(...cells: CellObject[]): Row {
     ...Array((cell.columnSpan ?? 1) - 1).fill(null),
   ]);
 }
-function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
+function formSheet(
+  lines: FormLine[],
+  sheetNumber: number | "monthly",
+): Sheet<Buffer> {
+  const monthly = sheetNumber === "monthly";
   const first = lines[0]?.trip;
   const month = first ? localDate.format(first.departureAt).slice(0, 7) : "";
   const driver = first ? compact(first.driver.user.name) : "";
@@ -191,12 +207,18 @@ function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
         ...heading("CONVENCIÓN COLECTIVA DE TRABAJO 40/89", 6),
         textDecoration: { underline: true },
       },
-      heading("NRO DE ÍTEMS 4/2/3, 4/2/4, 4/2/5, 4/2/6, 4/2/17 y 6.1.2.", 6),
+      heading(
+        "NRO DE ÍTEMS 4/2/3, 4/2/4, 4/2/5, 4/2/6, 4/2/17 y 6.1.2.",
+        monthly ? 7 : 6,
+      ),
     ),
     mergedRow(
       heading("EMPLEADOR: TOMASINI NORBERTO DAVID", 6),
       heading("CUIT: 20-22054852-0", 2),
-      heading(first ? monthLabel.format(first.departureAt) : "", 2),
+      heading(
+        first ? monthLabel.format(first.departureAt) : "",
+        monthly ? 3 : 2,
+      ),
       heading("N°", 1),
       { bottomBorderStyle: "thin", bottomBorderColor: "#000000" },
     ),
@@ -207,11 +229,12 @@ function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
         driver.length > 40 ? 45 : 26,
       ),
       heading("CUIL:", 1),
-      { columnSpan: 2 },
-      heading("N° DE PATENTE: " + plate, 3),
+      ...(monthly
+        ? [{ columnSpan: 6 }]
+        : [{ columnSpan: 2 }, heading("N° DE PATENTE: " + plate, 3)]),
     ),
     grid(
-      headers.map((value) => ({
+      (monthly ? [...headers, "Patente"] : headers).map((value) => ({
         value,
         type: String,
         wrap: true,
@@ -222,10 +245,12 @@ function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
   ];
   let usedSlots = 0;
   for (const { trip, slots } of lines) {
-    data.push(tripLine(trip, slots));
+    data.push(tripLine(trip, slots, monthly));
     usedSlots += slots;
   }
-  for (let i = usedSlots; i < slotsPerPage; i++) data.push(emptyLine);
+  if (!monthly) {
+    for (let i = usedSlots; i < slotsPerPage; i++) data.push(emptyLine);
+  }
   const last = data.length;
   const totals = headers.map((_, i): CellObject => {
     if (i < 6)
@@ -239,6 +264,7 @@ function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
         : `COUNT(${range})`;
     return { type: "Formula", value: `IF(${complete},SUM(${range}),"")` };
   });
+  if (monthly) totals.push({});
   data.push(
     grid(
       totals.map((cell) => ({ ...cell, bottomBorderStyle: "medium" })),
@@ -251,7 +277,7 @@ function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
       heading("FIRMA DEL EMPLEADOR", 3),
       signatureLine,
       heading("FIRMA DEL TRABAJADOR", 3),
-      signatureLine,
+      { ...signatureLine, columnSpan: monthly ? 4 : 3 },
     ),
   );
   // Number first for unique, valid Excel tab names even for namesakes and multiple folios.
@@ -264,12 +290,24 @@ function formSheet(lines: FormLine[], sheetNumber: number): Sheet<Buffer> {
         .trimEnd()
     : "Planilla de km";
   return {
-    sheet,
+    sheet: monthly ? monthlySheetName : sheet,
     data,
-    columns,
+    columns: monthly ? [...columns, { width: 13 }] : columns,
     showGridLines: false,
     orientation: "landscape",
   };
+}
+
+function tripSlots(trip: MileageTrip) {
+  return Math.max(routeLines(trip.origin), routeLines(trip.destination));
+}
+
+export function monthlyMileageReport(trips: MileageTrip[]) {
+  const lines = trips.map((trip) => ({ trip, slots: tripSlots(trip) }));
+  return writeXlsxFile(
+    [formSheet(lines, "monthly")],
+    printOptions(true),
+  ).toBuffer();
 }
 
 // The query supplies chronological departure order within each driver's month and truck.
@@ -300,10 +338,7 @@ export function mileageReport(trips: MileageTrip[]) {
     let page = startPage(),
       slots = 0;
     for (const trip of group) {
-      const lines = Math.max(
-        routeLines(trip.origin),
-        routeLines(trip.destination),
-      );
+      const lines = tripSlots(trip);
       if (page.length && slots + lines > slotsPerPage) {
         page = startPage();
         slots = 0;
@@ -315,6 +350,6 @@ export function mileageReport(trips: MileageTrip[]) {
   if (!pages.length) startPage();
   return writeXlsxFile(
     pages.map((page, i) => formSheet(page, i + 1)),
-    printOptions,
+    printOptions(false),
   ).toBuffer();
 }
