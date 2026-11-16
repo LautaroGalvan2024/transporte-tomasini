@@ -1,5 +1,11 @@
 # Verificación de la primera versión
 
+## Planilla mensual del contador — 16 de noviembre de 2026
+
+- Con PostgreSQL exclusivo `tomasini_test`, pasaron las 57 pruebas de integración. La exportación cubre cambios de mes según la zona horaria argentina, chofer, estado de revisión, anulaciones y viajes en más de un camión.
+- Desde Reportes, en escritorio (1440 × 1000) y celular (390 × 844), los filtros operativos vacíos permitieron descargar el mes elegido. Cada clic produjo un archivo con una sola hoja y los 30 viajes de prueba, en orden y con sus dos patentes. Otro mes mostró el aviso correspondiente. El detalle operativo conservó los filtros elegidos.
+- Excel de escritorio recalculó 4.635 km y 30 controles. La impresión en Carta horizontal ocupó dos páginas, repitió los encabezados y dejó los totales y las firmas al final. Evidencias locales en `output/qa/mensual/`.
+
 ## Controles y planilla de kilometraje — 11 de noviembre de 2026
 
 Publicado y verificado en producción el 11/11/2026 a las 21:03 (Argentina): release `4c4f6ed59eb09169124a857a319a92437e47d673e28a57fb71d1bdfd4ca14334`. El primer intento se interrumpió durante la preparación de dependencias; la recuperación verificó que la migración seguía pendiente, conservó la preparación previa y reconstruyó desde el mismo paquete. El recibo confirma la migración de controles en `tomasini_prod` y el cierre del rol migrador. El sitio público entregó los archivos exactos del release, la API respondió 200 y la descarga sin sesión devolvió 401. Se verificaron los servicios vecinos y se restauró el respaldo previo en el clúster local aislado. La evidencia privada se encuentra en `.local/deployments/4c4f6ed59eb09169/resume-preparation/`.

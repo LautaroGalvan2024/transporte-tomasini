@@ -235,7 +235,7 @@ function LoadState({
           <strong>No pudimos cargar la información</strong>
           <p>{error}</p>
         </div>
-        <button className="button secondary" onClick={retry}>
+        <button type="button" className="button secondary" onClick={retry}>
           <RefreshCw size={18} />
           Reintentar
         </button>
@@ -3517,7 +3517,11 @@ export function ReportsPage({ onNotify }: PageProps) {
   const [driverId, setDriverId] = useState("");
   const [truckId, setTruckId] = useState("");
   const [page, setPage] = useState(1);
-  const [exporting, setExporting] = useState<"form" | "detail" | null>(null);
+  const [monthlyOpen, setMonthlyOpen] = useState(false);
+  const [monthlyDriverId, setMonthlyDriverId] = useState("");
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [monthlyError, setMonthlyError] = useState("");
+  const [exporting, setExporting] = useState<"monthly" | "detail" | null>(null);
   const pageSize = usePageSize(530, 76);
   useEffect(() => setPage(1), [pageSize]);
   const query = new URLSearchParams({
@@ -3535,18 +3539,34 @@ export function ReportsPage({ onNotify }: PageProps) {
     setter(value);
     setPage(1);
   }
-  async function download(format: "form" | "detail") {
+  const monthlyDriver = drivers.data?.items.find(
+    (driver) => driver.id === monthlyDriverId,
+  );
+  const monthlyReady =
+    !!monthlyDriver && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+  async function download(format: "monthly" | "detail") {
     if (exporting) return;
+    if (format === "monthly" && !monthlyReady) return;
     setExporting(format);
+    setMonthlyError("");
     try {
-      const filters = new URLSearchParams(query);
-      if (format === "detail") filters.set("format", "detail");
+      const filters =
+        format === "monthly"
+          ? new URLSearchParams({ driverId: monthlyDriverId, month })
+          : new URLSearchParams(query);
+      filters.set("format", format);
       const response = await fetch(`/api/trips/export?${filters}`, {
         credentials: "same-origin",
         headers: { "X-Tomasini-Request": "1" },
       });
       if (!response.ok) {
         const body = await response.json().catch(() => null);
+        if (format === "monthly" && response.status === 404) {
+          throw new Error(
+            body?.error?.message ||
+              "No hay viajes de este chofer en el mes seleccionado.",
+          );
+        }
         throw new Error(
           body?.error?.message || "No pudimos generar el archivo.",
         );
@@ -3555,20 +3575,31 @@ export function ReportsPage({ onNotify }: PageProps) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `Tomasini-${format === "detail" ? "detalle" : "planilla-km"}-${from}-${to}.xlsx`;
+      if (format === "monthly" && monthlyDriver) {
+        const name =
+          monthlyDriver.name
+            .normalize("NFC")
+            .replace(/[^\p{L}\p{N}]+/gu, "-")
+            .replace(/^-|-$/g, "") || "chofer";
+        link.download = `Tomasini-${name}-${month}.xlsx`;
+      } else {
+        link.download = `Tomasini-detalle-${from}-${to}.xlsx`;
+      }
       document.body.appendChild(link);
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
+      if (format === "monthly") setMonthlyOpen(false);
       onNotify("El archivo de Excel está listo para descargar.");
     } catch (error) {
-      onNotify(err(error), "error");
+      if (format === "monthly") setMonthlyError(err(error));
+      else onNotify(err(error), "error");
     } finally {
       setExporting(null);
     }
   }
   const invalidDates = !from || !to || from > to;
-  const disabled =
+  const detailDisabled =
     invalidDates ||
     !state.data?.total ||
     !!state.error ||
@@ -3582,15 +3613,19 @@ export function ReportsPage({ onNotify }: PageProps) {
           <div className="admin-heading-actions report-downloads">
             <button
               className="button primary"
-              disabled={disabled}
-              onClick={() => download("form")}
+              disabled={exporting !== null}
+              aria-haspopup="dialog"
+              onClick={() => {
+                setMonthlyError("");
+                setMonthlyOpen(true);
+              }}
             >
               <ArrowDownToLine size={19} />
-              {exporting === "form" ? "Preparando planilla…" : "Planilla para el contador"}
+              Planilla para el contador
             </button>
             <button
               className="button secondary"
-              disabled={disabled}
+              disabled={detailDisabled}
               onClick={() => download("detail")}
             >
               <ArrowDownToLine size={17} />
@@ -3599,6 +3634,85 @@ export function ReportsPage({ onNotify }: PageProps) {
           </div>
         }
       />
+      {monthlyOpen && (
+        <Modal
+          title="Planilla para el contador"
+          dismissible={exporting !== "monthly"}
+          onClose={() => {
+            if (exporting !== "monthly") setMonthlyOpen(false);
+          }}
+        >
+          <form
+            className="admin-form"
+            aria-busy={exporting === "monthly"}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void download("monthly");
+            }}
+          >
+            <p className="admin-form-intro">
+              Descargá en un solo Excel todos los viajes del chofer con salida en el mes elegido.
+            </p>
+            <LoadState
+              loading={drivers.loading}
+              error={drivers.error}
+              retry={drivers.reload}
+            />
+            {!drivers.loading && !drivers.error && (
+              drivers.data?.items.length ? (
+                <>
+                  <Field label="Chofer">
+                    <select
+                      required
+                      disabled={exporting === "monthly"}
+                      value={monthlyDriverId}
+                      onChange={(event) => {
+                        setMonthlyDriverId(event.target.value);
+                        setMonthlyError("");
+                      }}
+                    >
+                      <option value="">Seleccioná un chofer</option>
+                      {drivers.data.items.map((driver) => (
+                        <option key={driver.id} value={driver.id}>
+                          {driver.name}
+                          {!driver.active ? " (inactivo)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Mes de salida">
+                    <input
+                      type="month"
+                      required
+                      placeholder="AAAA-MM"
+                      disabled={exporting === "monthly"}
+                      value={month}
+                      onChange={(event) => {
+                        setMonth(event.target.value);
+                        setMonthlyError("");
+                      }}
+                    />
+                  </Field>
+                  <FormError message={monthlyError} />
+                  <div className="admin-form-footer">
+                    <button
+                      className="button primary"
+                      disabled={!monthlyReady || exporting !== null}
+                    >
+                      <ArrowDownToLine size={18} />
+                      {exporting === "monthly"
+                        ? "Preparando planilla…"
+                        : "Descargar planilla"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p role="status">Todavía no hay choferes registrados.</p>
+              )
+            )}
+          </form>
+        </Modal>
+      )}
       <section className="admin-report-filters">
         <div className="admin-report-fields">
           <Field label="Desde">
