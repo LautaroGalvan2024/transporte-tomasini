@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production
-      url: https://tomasini.72-60-50-213.sslip.io
+      url: https://transporte-tomasini.com
     services:
       postgres:
         image: postgres:16.15-bookworm@sha256:e8a07d2c7579b038938cdba6c539e580e5001caf9ea203d397b5cc83e76bd938
