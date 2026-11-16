@@ -2,11 +2,12 @@
 
 ## Recursos propios y protección de las aplicaciones existentes
 
-El destino acordado es la VPS `72.60.50.213`. Tomasini utiliza su propia base PostgreSQL, roles, usuario Linux, runtime Node, servicio, virtual host, certificado y tareas programadas. El frontend compilado y la API se sirven bajo un único origen HTTPS; el navegador nunca se conecta a PostgreSQL.
+El destino acordado es la VPS `72.60.50.213`. Tomasini utiliza su propia base PostgreSQL, roles, usuario Linux, runtime Node, servicio, virtual hosts, certificados y tareas programadas. El navegador usa el frontend y su ruta `/api` bajo el mismo origen HTTPS. El dominio público de la API sirve las rutas del backend mediante el mismo proceso local.
 
 | Recurso                   | Tomasini                                                              |
 | ------------------------- | --------------------------------------------------------------------- |
-| Aplicación pública        | `https://tomasini.72-60-50-213.sslip.io`                              |
+| Aplicación pública        | `https://transporte-tomasini.com`                                     |
+| API pública               | `https://transporte-tomasini-api.com/api`                             |
 | API y frontend internos   | `127.0.0.1:3102`                                                      |
 | Carpeta                   | `/opt/tomasini`                                                       |
 | Usuario y servicio        | `tomasini`, `tomasini.service`                                        |
@@ -18,6 +19,13 @@ El destino acordado es la VPS `72.60.50.213`. Tomasini utiliza su propia base Po
 El instalador no modifica sitios, datos ni procesos de Mozzi o Horizontes. Las únicas modificaciones compartidas son el agregado de un virtual host propio y reglas HBA limitadas a los tres roles de Tomasini, con validación y recargas; nunca reinicia Nginx ni PostgreSQL. Captura huellas de los archivos preexistentes de Nginx, PID de servicios y comprobaciones HTTP antes de actuar, y las coteja en las etapas críticas. Compartir VPS conserva un riesgo de recursos comunes; se limitan conexiones, memoria y CPU.
 
 Inspección de solo lectura del 02/11/2026: se observaron aproximadamente 6,7 GiB de memoria disponible y 86 GiB de disco libre; el puerto 3102 no estaba ocupado. Mozzi web/API respondieron 200 y sus huellas Nginx coincidieron con la referencia de Horizontes. Son datos históricos; el instalador repite las verificaciones. SSH por clave funciona; `sudo -n` requiere contraseña, que deberá ingresarse directamente en una terminal.
+
+## Activar los dominios en la VPS existente
+
+1. En cada zona DNS de Hostinger, apuntar el registro `A` de `@` a `72.60.50.213`. El `www` de cada zona es un `CNAME` a su respectivo dominio. Verificar la resolución pública de los cuatro nombres antes de emitir los certificados.
+2. Desde el checkout revisado, ejecutar `./scripts/start-domain-cutover.ps1`. El launcher abre una terminal para ingresar sudo directamente en la VPS. Para usar una terminal interactiva ya abierta, agregar `-InCurrentTerminal`. El procedimiento prepara HTTP-01, instala HTTPS y la renovación, actualiza el origen del frontend y los archivos operativos del receptor de GitHub.
+3. Comprobar la portada, ambas rutas `/api/ready`, el rechazo de la planilla sin sesión, los alias y las invitaciones anteriores. Las sesiones del navegador están ligadas al dominio, por lo que cada usuario vuelve a iniciar sesión al entrar al nuevo sitio.
+4. Con el corte verificado, integrar el PR de dominios y seguir **Deploy Tomasini** hasta la verificación pública del commit. Si hace falta volver al dominio anterior, usar `./scripts/start-domain-cutover.ps1 -Rollback` y coordinar también las URLs que verifica el workflow con el dominio activo.
 
 ## Desarrollo local
 
