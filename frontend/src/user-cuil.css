@@ -1,0 +1,39 @@
+.admin-page .admin-cuil-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  max-width: 100%;
+  margin-top: 3px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: #315e83;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.admin-cuil-link svg {
+  flex-shrink: 0;
+}
+.admin-cuil-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.admin-cuil-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #cfdde9;
+  border-radius: 8px;
+  background: #f1f6fb;
+  color: #315572;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.admin-cuil-reference span {
+  color: #65788a;
+}

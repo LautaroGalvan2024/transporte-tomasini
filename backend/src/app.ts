@@ -20,6 +20,7 @@ import { errorHandler } from "./errors.js";
 import { invitationsRouter, publicInvitationsRouter } from "./invitations.js";
 import { usersRouter } from "./users.js";
 import { trailersRouter } from "./trailers.js";
+import { holidayCalendarRouter } from "./holiday-calendar.js";
 
 export function createApp() {
   const cfg = getConfig(),
@@ -73,6 +74,7 @@ export function createApp() {
   app.use("/api/trailers", trailersRouter());
   app.use("/api/drivers", driversRouter());
   app.use("/api/trips", tripsRouter());
+  app.use("/api/holiday-calendar", holidayCalendarRouter());
   app.use("/api/obligations", obligationsRouter());
   app.use("/api", dashboardRouter());
   app.use("/api", (_req, res) =>

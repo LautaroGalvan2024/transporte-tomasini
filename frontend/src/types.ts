@@ -9,6 +9,7 @@ export interface User {
   driverId?: string | null;
 }
 export interface UserAccess extends User {
+  cuil: string | null;
   createdAt: string;
   updatedAt: string;
   driverId: string | null;
@@ -40,12 +41,23 @@ export interface Driver {
   userId: string;
   name: string;
   username: string;
+  cuil: string | null;
   phone: string | null;
   active: boolean;
   role: Role;
   accountActive: boolean;
   assignedTruckId: string | null;
   truck?: Truck | null;
+}
+export interface Km100Preview {
+  mode: "NONE" | "FULL" | "PARTIAL" | "PENDING";
+  suggestedKm: number | null;
+  intervals: { start: string; end: string; label: string }[];
+  missingYears: number[];
+  calendarToken: string;
+}
+export interface Km100Context extends Km100Preview {
+  schemaVersion: 1;
 }
 export interface Trip {
   id: string;
@@ -59,6 +71,8 @@ export interface Trip {
   startKm: number;
   endKm: number;
   distanceKm: number;
+  km100: number | null;
+  km100Context: Km100Context | null;
   controlCount: number | null;
   allowance: string | number | null;
   notes: string | null;

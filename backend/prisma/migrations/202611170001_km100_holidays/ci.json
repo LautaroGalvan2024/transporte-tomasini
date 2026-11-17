@@ -1,0 +1,1 @@
+{"version":1,"operations":[{"op":"addNullableColumn","table":"Trip","column":"km100","type":"Int","nonnegative":true},{"op":"addNullableColumn","table":"Trip","column":"km100Context","type":"String"},{"op":"addNullableColumn","table":"Setting","column":"holidayCalendar","type":"String"}]}

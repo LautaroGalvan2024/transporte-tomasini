@@ -9,6 +9,7 @@ import { getConfig, validateDatabaseUrl } from "../src/config.js";
 import { hashPassword } from "../src/password.js";
 import { businessDay, calculateStatus } from "../src/domain.js";
 import { runNotificationJob } from "../src/notifications.js";
+import { resolveFixtureKm100 } from "./km100-fixtures.js";
 
 const enabled =
   process.env.TOMASINI_INTEGRATION === "1" || process.env.NODE_ENV === "test";
@@ -133,6 +134,7 @@ test(
       arrivalAt: at(hour + 1),
       startKm: hour * 100,
       endKm: hour * 100 + 50,
+      km100: 0,
       ...extra,
     });
     try {
@@ -844,7 +846,11 @@ test(
           const review = await post(
             adminAgent,
             `/trips/${created.body.id}/review`,
-            { version: changed.body.version },
+            {
+              version: (
+                await resolveFixtureKm100(adminAgent, origin, created.body.id)
+              ).version,
+            },
           );
           assert.equal(review.status, 200);
           assert.equal(
@@ -930,7 +936,7 @@ test(
           const overlappingEdit = await patch(
             losingAgent,
             `/trips/${adjacent.body.id}`,
-            { version: adjacent.body.version, departureAt: at(60.5) },
+            { version: adjacent.body.version, departureAt: at(60.5), km100: 0 },
           );
           assert.equal(overlappingEdit.status, 409);
           const canceled = await post(
@@ -945,7 +951,7 @@ test(
           const allowed = await patch(
             losingAgent,
             `/trips/${adjacent.body.id}`,
-            { version: adjacent.body.version, departureAt: at(60.5) },
+            { version: adjacent.body.version, departureAt: at(60.5), km100: 0 },
           );
           assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
         },
@@ -956,7 +962,7 @@ test(
         async () => {
           const truck = await createTruck();
           const trailer = await createTrailer({ assignedTruckId: truck.id });
-          const input = trip(truck.id, 80);
+          const input = trip(truck.id, 80, { km100: undefined });
           const fields = {
             driverId: driver.driver!.id,
             truckId: truck.id,

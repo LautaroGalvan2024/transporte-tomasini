@@ -217,6 +217,7 @@ test(
             arrivalAt: new Date(now - 4000).toISOString(),
             startKm: 1000,
             endKm: 1020,
+            km100: 0,
           });
           assert.equal(ownTrip.status, 201, JSON.stringify(ownTrip.body));
           assert.equal(ownTrip.body.driverId, adminDriverId);
@@ -229,6 +230,7 @@ test(
             arrivalAt: new Date(now - 2000).toISOString(),
             startKm: 1020,
             endKm: 1030,
+            km100: 0,
           });
           assert.equal(otherTrip.status, 201);
           const document = await post(agentA, "/obligations", {

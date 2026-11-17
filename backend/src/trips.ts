@@ -13,7 +13,11 @@ import {
   versionBody,
   cancelBody,
   uuid,
+  km100PreviewBody,
 } from "./validation.js";
+import { getCalendar } from "./holiday-calendar.js";
+import { evaluateKm100, parseKm100Context } from "./holiday-domain.js";
+import { tripKm100 } from "./trip-km100.js";
 import { dayStart, dayAfter, validateTripDates } from "./domain.js";
 import {
   tripInclude,
@@ -89,6 +93,16 @@ async function monthlyTripWhere(
 
 export function tripsRouter() {
   const router = Router();
+  router.post("/km100-preview", async (req, res) => {
+    const input = km100PreviewBody.parse(req.body);
+    const data = {
+      ...input,
+      departureAt: new Date(input.departureAt),
+      arrivalAt: new Date(input.arrivalAt),
+    };
+    validateTripDates(data);
+    res.json(evaluateKm100(await getCalendar(), data));
+  });
   router.get("/", async (req, res) => {
     const { input, where } = tripWhere(req);
     const result = await getDb().$transaction(
@@ -147,7 +161,9 @@ export function tripsRouter() {
         startKm: true,
         endKm: true,
         controlCount: true,
-        driver: { select: { user: { select: { name: true } } } },
+        km100: true,
+        km100Context: true,
+        driver: { select: { cuil: true, user: { select: { name: true } } } },
         truck: { select: { plate: true } },
         trailer: { select: { plate: true } },
         allowance: true,
@@ -197,6 +213,8 @@ export function tripsRouter() {
       "Estado revisión",
       "Observaciones",
       "Controles",
+      "Km al 100%",
+      "Estado km al 100%",
     ];
     const displayTime = (date: Date) =>
       new Intl.DateTimeFormat("es-AR", {
@@ -227,6 +245,12 @@ export function tripsRouter() {
           row.reviewedAt ? "Revisado" : "Pendiente",
           row.notes,
           row.controlCount,
+          row.km100,
+          row.km100 === null
+            ? "Sin informar"
+            : parseKm100Context(row.km100Context)?.mode === "PENDING"
+              ? "Provisional: calendario pendiente"
+              : "Informado",
         ].map((value, i) =>
           value === null
             ? null
@@ -277,7 +301,12 @@ export function tripsRouter() {
       );
     const driverId = user.role === "DRIVER" ? user.driver!.id : input.driverId;
     ensure(driverId, 400, "Seleccioná el chofer.");
-    const { clientRequestId, ...body } = input;
+    const {
+      clientRequestId,
+      km100CalendarToken: _calendarToken,
+      km100: _km100,
+      ...body
+    } = input;
     const data = {
       ...body,
       driverId,
@@ -307,6 +336,7 @@ export function tripsRouter() {
           ...(data.controlCount != null
             ? { controlCount: data.controlCount }
             : {}),
+          ...(input.km100 != null ? { km100: input.km100 } : {}),
         }),
       )
       .digest("hex");
@@ -349,8 +379,15 @@ export function tripsRouter() {
         id: randomUUID(),
         ...data,
       });
+      const premium = await tripKm100(tx, data, input);
       const trip = await tx.trip.create({
-        data: { ...data, clientRequestId, requestHash, createdById: user.id },
+        data: {
+          ...data,
+          ...premium,
+          clientRequestId,
+          requestHash,
+          createdById: user.id,
+        },
         include: tripInclude,
       });
       await audit(
@@ -406,6 +443,9 @@ export function tripsRouter() {
       const {
         version: _version,
         clientRequestId: _clientRequestId,
+        km100: _km100,
+        km100CalendarToken: _calendarToken,
+        km100Resolve: _resolve,
         ...fields
       } = input;
       const data = {
@@ -422,6 +462,27 @@ export function tripsRouter() {
         endKm: input.endKm ?? old.endKm,
       };
       validateTripDates(data);
+      const oldContext = parseKm100Context(old.km100Context);
+      if (input.km100Resolve)
+        ensure(
+          user.role === "ADMIN",
+          403,
+          "Administración debe resolver el calendario pendiente.",
+        );
+      ensure(
+        oldContext || (input.km100 == null && !input.km100Resolve),
+        400,
+        "Este viaje es anterior al registro de kilómetros al 100% y conserva sus datos originales.",
+        "KM100_LEGACY",
+      );
+      const recalculate =
+        Boolean(oldContext) &&
+        (data.departureAt.getTime() !== old.departureAt.getTime() ||
+          data.arrivalAt.getTime() !== old.arrivalAt.getTime() ||
+          data.startKm !== old.startKm ||
+          data.endKm !== old.endKm ||
+          input.km100 !== undefined ||
+          input.km100Resolve);
       await lockTrucks(tx, [old.truckId, data.truckId]);
       await lockTrailers(
         tx,
@@ -450,10 +511,17 @@ export function tripsRouter() {
         id,
       );
       await validateTruckHistory(tx, data.truckId, { id, ...data }, id);
+      const premium = recalculate
+        ? await tripKm100(tx, data, input, {
+            keepPending: oldContext?.mode === "PENDING",
+            resolve: input.km100Resolve,
+          })
+        : {};
       const row = await tx.trip.update({
         where: { id, version: input.version },
         data: {
           ...data,
+          ...premium,
           version: { increment: 1 },
           reviewedAt: null,
           reviewedById: null,
@@ -490,6 +558,12 @@ export function tripsRouter() {
       );
       ensure(old.status === "ACTIVE", 409, "El viaje está anulado.");
       if (old.reviewedAt) return old;
+      ensure(
+        parseKm100Context(old.km100Context)?.mode !== "PENDING",
+        409,
+        "Resolvé los kilómetros al 100% con el calendario confirmado antes de revisar el viaje.",
+        "KM100_CALENDAR_PENDING",
+      );
       const trip = await tx.trip.update({
         where: { id, version: input.version },
         data: {

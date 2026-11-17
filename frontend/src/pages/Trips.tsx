@@ -29,6 +29,7 @@ import {
 import { api, ApiError, send } from "../api";
 import type {
   Driver,
+  Km100Preview,
   PageProps,
   Trailer,
   Trip,
@@ -48,6 +49,8 @@ import {
 } from "../ui";
 import { useData } from "../useData";
 import { useDesktopRows } from "../useDesktopRows";
+import { tripDateForRequest } from "../trip-date";
+import "../km100.css";
 
 type TripFormValues = {
   truckId: string;
@@ -59,6 +62,7 @@ type TripFormValues = {
   arrivalAt: string;
   startKm: string;
   endKm: string;
+  km100: string;
   controlCount: string;
   allowance: string;
   notes: string;
@@ -73,6 +77,7 @@ const emptyValues = (): TripFormValues => ({
   arrivalAt: "",
   startKm: "",
   endKm: "",
+  km100: "",
   controlCount: "0",
   allowance: "",
   notes: "",
@@ -125,13 +130,40 @@ export function TripForm({
     [loadRevision, setLoadRevision] = useState(0);
   const [view, setView] = useState<"trip" | "extras">("trip");
   const [trailerConfirmed, setTrailerConfirmed] = useState(false);
+  const [savedTrip, setSavedTrip] = useState<Trip | null>(null);
+  const [kmPreview, setKmPreview] = useState<Km100Preview | null>(null);
+  const [kmPreviewKey, setKmPreviewKey] = useState("");
+  const [kmPreviewError, setKmPreviewError] = useState("");
+  const [kmPreviewBusy, setKmPreviewBusy] = useState(false);
+  const [kmPreviewRetry, setKmPreviewRetry] = useState(0);
+  const [kmEditing, setKmEditing] = useState(false);
+  const [resolveKm100, setResolveKm100] = useState(false);
   const baseline = useRef<TripFormValues>(emptyValues());
   const initialized = useRef(false),
     requestId = useRef(crypto.randomUUID()),
     submitting = useRef(false),
     errorRef = useRef<HTMLDivElement>(null);
   const set = (field: keyof TripFormValues, value: string) => {
-    setValues((v) => ({ ...v, [field]: value }));
+    const changesKmInputs = [
+      "departureAt",
+      "arrivalAt",
+      "startKm",
+      "endKm",
+    ].includes(field);
+    const invalidateKm =
+      changesKmInputs &&
+      values[field] !== value &&
+      (!tripId || Boolean(savedTrip?.km100Context));
+    if (invalidateKm) {
+      setKmPreview(null);
+      setKmPreviewKey("");
+      setKmPreviewError("");
+    }
+    setValues((v) => ({
+      ...v,
+      [field]: value,
+      ...(invalidateKm ? { km100: "" } : {}),
+    }));
     setFields((f) => ({ ...f, [field]: "" }));
   };
   const suggestedTrailer = (truckId: string) =>
@@ -162,6 +194,7 @@ export function TripForm({
           arrivalAt: localInput(t.arrivalAt),
           startKm: String(t.startKm),
           endKm: String(t.endKm),
+          km100: t.km100?.toString() ?? "",
           controlCount: t.controlCount?.toString() ?? "",
           allowance: t.allowance == null ? "" : String(t.allowance),
           notes: t.notes || "",
@@ -169,6 +202,9 @@ export function TripForm({
         baseline.current = loadedValues;
         setValues(loadedValues);
         setVersion(t.version);
+        setSavedTrip(t);
+        setKmEditing(false);
+        setResolveKm100(false);
         setTrailerConfirmed(true);
         setExtra(Boolean(t.notes || t.allowance != null));
         initialized.current = true;
@@ -204,7 +240,8 @@ export function TripForm({
     });
     initialized.current = true;
   }, [drivers, trucks, trailers, user, tripId]);
-  const changed = JSON.stringify(values) !== JSON.stringify(baseline.current);
+  const changed =
+    JSON.stringify(values) !== JSON.stringify(baseline.current) || resolveKm100;
   const blocked = busy || Boolean(pendingBody);
   useEffect(() => {
     onDirtyChange(changed && !success);
@@ -221,6 +258,94 @@ export function TripForm({
       values.startKm !== "" && values.endKm !== ""
         ? Number(values.endKm) - Number(values.startKm)
         : null;
+  const legacyKm100 = Boolean(tripId && savedTrip && !savedTrip.km100Context);
+  const kmInputsChanged = (
+    ["departureAt", "arrivalAt", "startKm", "endKm"] as const
+  ).some((field) => values[field] !== baseline.current[field]);
+  const evaluateKm =
+    !tripId ||
+    Boolean(
+      savedTrip &&
+      !legacyKm100 &&
+      (kmInputsChanged || kmEditing || resolveKm100),
+    );
+  const kmInputKey = JSON.stringify([
+    values.departureAt,
+    values.arrivalAt,
+    values.startKm,
+    values.endKm,
+  ]);
+  const validKmInputs = Boolean(
+    values.departureAt &&
+    values.arrivalAt &&
+    values.arrivalAt >= values.departureAt &&
+    /^\d+$/.test(values.startKm) &&
+    /^\d+$/.test(values.endKm) &&
+    km !== null &&
+    km >= 0 &&
+    Number(values.startKm) <= 9_999_999 &&
+    Number(values.endKm) <= 9_999_999,
+  );
+  const currentPreview = kmPreviewKey === kmInputKey ? kmPreview : null;
+  useEffect(() => {
+    if (!evaluateKm || !validKmInputs) {
+      setKmPreview(null);
+      setKmPreviewKey("");
+      setKmPreviewBusy(false);
+      setKmPreviewError("");
+      if (!evaluateKm && savedTrip) {
+        setValues((v) =>
+          v.km100 === baseline.current.km100
+            ? v
+            : { ...v, km100: baseline.current.km100 },
+        );
+      }
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setKmPreviewBusy(true);
+    setKmPreviewError("");
+    const timer = window.setTimeout(() => {
+      api<Km100Preview>("/trips/km100-preview", {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({
+          departureAt: tripDateForRequest(
+            values.departureAt,
+            baseline.current.departureAt,
+            savedTrip?.departureAt,
+          ),
+          arrivalAt: tripDateForRequest(
+            values.arrivalAt,
+            baseline.current.arrivalAt,
+            savedTrip?.arrivalAt,
+          ),
+          startKm: Number(values.startKm),
+          endKm: Number(values.endKm),
+        }),
+      })
+        .then((preview) => {
+          if (!active) return;
+          setKmPreview(preview);
+          setKmPreviewKey(kmInputKey);
+          if (preview.suggestedKm !== null) {
+            setValues((v) => ({ ...v, km100: String(preview.suggestedKm) }));
+          }
+        })
+        .catch((err: Error) => {
+          if (active) setKmPreviewError(err.message);
+        })
+        .finally(() => {
+          if (active) setKmPreviewBusy(false);
+        });
+    }, 300);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [evaluateKm, validKmInputs, kmInputKey, kmPreviewRetry, resolveKm100]);
   const routes = Array.from(
     new Map(
       (recent?.items || []).map((t) => [
@@ -256,6 +381,17 @@ export function TripForm({
       invalid.endKm = "Ingresá los kilómetros que marcaba al llegar.";
     if (km !== null && km < 0)
       invalid.endKm = "El kilometraje final debe ser igual o mayor al inicial.";
+    if (!pendingBody && evaluateKm && validKmInputs) {
+      if (!currentPreview || kmPreviewBusy || kmPreviewError) {
+        invalid.km100 =
+          kmPreviewError || "Esperá la comprobación de los horarios al 100%.";
+      } else if (!/^\d+$/.test(values.km100) || Number(values.km100) > km!) {
+        invalid.km100 = `Ingresá los km al 100%, entre 0 y ${formatKm(km!)}.`;
+      } else if (resolveKm100 && currentPreview.mode === "PENDING") {
+        invalid.km100 =
+          "Primero confirmá los feriados de los años pendientes en Configuración.";
+      }
+    }
     const controls = e.currentTarget.elements.namedItem(
       "controlCount",
     ) as HTMLInputElement;
@@ -290,10 +426,23 @@ export function TripForm({
         trailerId: values.trailerId || null,
         origin: values.origin.trim(),
         destination: values.destination.trim(),
-        departureAt: new Date(`${values.departureAt}:00-03:00`).toISOString(),
-        arrivalAt: new Date(`${values.arrivalAt}:00-03:00`).toISOString(),
+        departureAt: tripDateForRequest(
+          values.departureAt,
+          baseline.current.departureAt,
+          savedTrip?.departureAt,
+        ),
+        arrivalAt: tripDateForRequest(
+          values.arrivalAt,
+          baseline.current.arrivalAt,
+          savedTrip?.arrivalAt,
+        ),
         startKm: Number(values.startKm),
         endKm: Number(values.endKm),
+        km100: evaluateKm ? Number(values.km100) : undefined,
+        km100CalendarToken: evaluateKm
+          ? currentPreview?.calendarToken
+          : undefined,
+        ...(resolveKm100 ? { km100Resolve: true } : {}),
         controlCount:
           values.controlCount === "" ? null : Number(values.controlCount),
         allowance:
@@ -318,6 +467,12 @@ export function TripForm({
       const err = e as ApiError;
       if (err.status > 0 && err.status < 500) setPendingBody(null);
       setConflict(err.code === "VERSION_CONFLICT");
+      if (err.code === "KM100_CALENDAR_CHANGED") {
+        setKmPreview(null);
+        setKmPreviewKey("");
+        setKmPreviewRetry((n) => n + 1);
+        setValues((v) => ({ ...v, km100: "" }));
+      }
       setError(
         err.status === 0 || err.status >= 500
           ? "No pudimos confirmar el guardado. Reintentá el mismo envío para comprobarlo sin duplicar el viaje."
@@ -382,6 +537,7 @@ export function TripForm({
             </span>
           </div>
           <small>{formatDate(success.departureAt, true)}</small>
+          <Km100Summary trip={success} />
         </div>
         <button className="button primary" onClick={onDone}>
           Ver {user.role === "DRIVER" ? "mis viajes" : "viajes"}
@@ -403,6 +559,8 @@ export function TripForm({
               return initial;
             });
             setExtra(false);
+            setKmEditing(false);
+            setResolveKm100(false);
             setTrailerConfirmed(false);
             if (tripId) onDone();
           }}
@@ -662,6 +820,175 @@ export function TripForm({
                 <small> km</small>
               </strong>
             </div>
+            <section className="trip-km100" aria-label="Kilómetros al 100%">
+              <div className="trip-km100-heading">
+                <Clock3 size={18} aria-hidden="true" />
+                <h3>Km al 100%</h3>
+              </div>
+              {legacyKm100 ? (
+                <p className="trip-km100-help">
+                  Sin informar. Este viaje se conserva tal como fue registrado.
+                </p>
+              ) : !evaluateKm && savedTrip ? (
+                <>
+                  <Km100Summary trip={savedTrip} />
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={blocked}
+                    onClick={() => setKmEditing(true)}
+                  >
+                    Corregir km al 100%
+                  </button>
+                </>
+              ) : (
+                <>
+                  {!validKmInputs && (
+                    <p className="trip-km100-help">
+                      Completá las fechas, los horarios y los odómetros para
+                      comprobar qué parte corresponde.
+                    </p>
+                  )}
+                  {kmPreviewBusy && (
+                    <p className="trip-km100-loading" role="status">
+                      <LoaderCircle size={16} className="spin" /> Comprobando
+                      horarios…
+                    </p>
+                  )}
+                  {kmPreviewError && (
+                    <div className="trip-km100-error" role="alert">
+                      <p>{kmPreviewError}</p>
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={blocked || kmPreviewBusy}
+                        onClick={() => setKmPreviewRetry((n) => n + 1)}
+                      >
+                        Reintentar comprobación
+                      </button>
+                    </div>
+                  )}
+                  {currentPreview && !kmPreviewBusy && !kmPreviewError && (
+                    <>
+                      {currentPreview.mode === "PENDING" && (
+                        <p className="trip-km100-pending">
+                          <Info size={17} aria-hidden="true" />
+                          <span>
+                            Falta confirmar el calendario de{" "}
+                            {currentPreview.missingYears.join(", ")}. Informá
+                            los km al 100%; administración deberá validarlos
+                            antes de revisar el viaje.
+                          </span>
+                        </p>
+                      )}
+                      {currentPreview.suggestedKm === null ? (
+                        <Field
+                          label="Km recorridos al 100%"
+                          error={fields.km100}
+                          hint="Ingresá solo los recorridos en esos horarios. Usá 0 si estuviste detenido durante todo ese tramo."
+                        >
+                          <span className="input-suffix">
+                            <input
+                              type="number"
+                              name="km100"
+                              inputMode="numeric"
+                              min={0}
+                              max={km ?? undefined}
+                              step={1}
+                              required
+                              value={values.km100}
+                              onChange={(e) => set("km100", e.target.value)}
+                              disabled={blocked}
+                              placeholder={`Entre 0 y ${formatKm(km ?? 0)}`}
+                            />
+                            <span>km</span>
+                          </span>
+                        </Field>
+                      ) : (
+                        <div className="trip-km100-automatic">
+                          <strong>
+                            {formatKm(currentPreview.suggestedKm)}{" "}
+                            <small>km</small>
+                          </strong>
+                          <p>
+                            {currentPreview.mode === "FULL"
+                              ? "Todo el recorrido corresponde al 100%."
+                              : currentPreview.mode === "PENDING"
+                                ? "Sin kilómetros recorridos."
+                                : "El recorrido no coincide con horarios al 100%."}
+                          </p>
+                          {fields.km100 && (
+                            <span className="error-text" role="alert">
+                              {fields.km100}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {currentPreview.intervals.length > 0 && (
+                        <details className="trip-km100-intervals">
+                          <summary>
+                            Ver horarios al 100% dentro del viaje
+                          </summary>
+                          <ul>
+                            {currentPreview.intervals.map((interval, index) => (
+                              <li
+                                key={`${interval.start}-${interval.end}-${index}`}
+                              >
+                                <strong>{interval.label}</strong>
+                                <span>
+                                  {formatDate(interval.start, true)} →{" "}
+                                  {formatDate(interval.end, true)}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </>
+                  )}
+                  {fields.km100 && !currentPreview && (
+                    <p className="error-text" role="alert">
+                      {fields.km100}
+                    </p>
+                  )}
+                </>
+              )}
+              {savedTrip?.km100Context?.mode === "PENDING" &&
+                user.role === "ADMIN" && (
+                  <label className="trip-km100-resolve">
+                    <input
+                      type="checkbox"
+                      checked={resolveKm100}
+                      disabled={blocked}
+                      onChange={(e) => {
+                        setResolveKm100(e.target.checked);
+                        setKmEditing(e.target.checked);
+                        setFields((f) => ({ ...f, km100: "" }));
+                        if (!e.target.checked && !kmInputsChanged)
+                          setValues((v) => ({
+                            ...v,
+                            km100: baseline.current.km100,
+                          }));
+                      }}
+                    />
+                    <span>Validar estos km con el calendario confirmado</span>
+                  </label>
+                )}
+              {tripId && kmEditing && !kmInputsChanged && !resolveKm100 && (
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={blocked}
+                  onClick={() => {
+                    setKmEditing(false);
+                    setValues((v) => ({ ...v, km100: baseline.current.km100 }));
+                    setFields((f) => ({ ...f, km100: "" }));
+                  }}
+                >
+                  Conservar el valor guardado
+                </button>
+              )}
+            </section>
             <Field label="Controles" error={fields.controlCount}>
               <input
                 type="number"
@@ -671,7 +998,9 @@ export function TripForm({
                 max={2147483647}
                 step={1}
                 required={!tripId || baseline.current.controlCount !== ""}
-                placeholder={baseline.current.controlCount === "" ? "Sin informar" : "0"}
+                placeholder={
+                  baseline.current.controlCount === "" ? "Sin informar" : "0"
+                }
                 value={values.controlCount}
                 onChange={(e) => set("controlCount", e.target.value)}
                 disabled={blocked}
@@ -825,10 +1154,14 @@ type TripAuditEvent = {
   before?: {
     trailerId?: string | null;
     trailer?: { plate: string } | null;
+    km100?: number | null;
+    km100Context?: { mode: string } | null;
   } | null;
   after?: {
     trailerId?: string | null;
     trailer?: { plate: string } | null;
+    km100?: number | null;
+    km100Context?: { mode: string } | null;
   } | null;
 };
 function trailerHistoryChange(event: TripAuditEvent) {
@@ -841,6 +1174,45 @@ function trailerHistoryChange(event: TripAuditEvent) {
   )
     return `Acoplado: ${event.before?.trailer?.plate || "Sin acoplado registrado"} → ${after}`;
   return "";
+}
+function km100HistoryChange(event: TripAuditEvent) {
+  if (!event.after || !("km100" in event.after)) return "";
+  const describe = (snapshot: TripAuditEvent["after"]) =>
+    snapshot?.km100 == null
+      ? "Sin informar"
+      : `${formatKm(snapshot.km100)} km${snapshot.km100Context?.mode === "PENDING" ? " (pendiente de validar)" : ""}`;
+  if (event.action === "CREATED" && event.after.km100 != null)
+    return `Km al 100%: ${describe(event.after)}`;
+  if (
+    event.action === "UPDATED" &&
+    ((event.before?.km100 ?? null) !== event.after.km100 ||
+      event.before?.km100Context?.mode !== event.after.km100Context?.mode)
+  )
+    return `Km al 100%: ${describe(event.before)} → ${describe(event.after)}`;
+  return "";
+}
+
+function Km100Summary({
+  trip,
+}: {
+  trip: Pick<Trip, "km100" | "km100Context">;
+}) {
+  return (
+    <div
+      className={`trip-km100-summary ${trip.km100Context?.mode === "PENDING" ? "pending" : ""}`}
+    >
+      <span>Km al 100%</span>
+      <strong>
+        {trip.km100 == null ? "Sin informar" : `${formatKm(trip.km100)} km`}
+      </strong>
+      {trip.km100Context?.mode === "PENDING" && (
+        <small>
+          Pendiente de validar el calendario. Aún no se incluye en la planilla
+          del contador.
+        </small>
+      )}
+    </div>
+  );
 }
 // Every character remains available: pages split at whitespace without trimming.
 function paginateDetailText(
@@ -1266,6 +1638,14 @@ export function TripsPage({
                           {formatKm(t.distanceKm)}
                         </strong>
                         <small> km</small>
+                        {t.km100 != null && (
+                          <small className="cell-subtitle">
+                            {formatKm(t.km100)} al 100%
+                            {t.km100Context?.mode === "PENDING"
+                              ? " · por validar"
+                              : ""}
+                          </small>
+                        )}
                       </td>
                       <td>
                         <TripStatus trip={t} />
@@ -1321,6 +1701,14 @@ export function TripsPage({
                       ? `Acoplado ${t.trailer.plate}`
                       : "Sin acoplado registrado"}
                   </small>
+                  {t.km100 != null && (
+                    <small className="trip-mobile-km100">
+                      {formatKm(t.km100)} km al 100%
+                      {t.km100Context?.mode === "PENDING"
+                        ? " · pendiente de validar"
+                        : ""}
+                    </small>
+                  )}
                 </button>
               ))}
             </div>
@@ -1441,6 +1829,20 @@ export function TripsPage({
                     <TripStatus trip={detail} />
                   </div>
                   <dl className="trip-detail-data">
+                    <div className="trip-detail-km100">
+                      <dt>Km al 100%</dt>
+                      <dd>
+                        {detail.km100 == null
+                          ? "Sin informar"
+                          : `${formatKm(detail.km100)} km`}
+                        {detail.km100Context?.mode === "PENDING" && (
+                          <small className="trip-km100-pending-label">
+                            Pendiente de validar el calendario. Editá el viaje
+                            para resolverlo antes de marcarlo revisado.
+                          </small>
+                        )}
+                      </dd>
+                    </div>
                     <div>
                       <dt>Chofer</dt>
                       <dd>{detail.driver.name}</dd>
@@ -1543,6 +1945,11 @@ export function TripsPage({
                                     {trailerHistoryChange(event)}
                                   </p>
                                 )}
+                                {part === 1 && km100HistoryChange(event) && (
+                                  <p className="trip-detail-long-text">
+                                    {km100HistoryChange(event)}
+                                  </p>
+                                )}
                                 {reason && (
                                   <>
                                     <p className="trip-detail-long-text">
@@ -1586,7 +1993,10 @@ export function TripsPage({
                     onClick={() => onEdit(detail.id)}
                   >
                     <FilePenLine size={18} />
-                    Editar viaje
+                    {user.role === "ADMIN" &&
+                    detail.km100Context?.mode === "PENDING"
+                      ? "Validar km al 100%"
+                      : "Editar viaje"}
                   </button>
                 )}
               {user.role === "ADMIN" &&
@@ -1594,7 +2004,12 @@ export function TripsPage({
                 detail.status === "ACTIVE" && (
                   <button
                     className="button primary"
-                    disabled={busy}
+                    disabled={busy || detail.km100Context?.mode === "PENDING"}
+                    title={
+                      detail.km100Context?.mode === "PENDING"
+                        ? "Primero validá los km con el calendario confirmado."
+                        : undefined
+                    }
                     onClick={() => review(detail)}
                   >
                     <Check size={19} />

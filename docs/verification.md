@@ -1,5 +1,13 @@
 # Verificación de la primera versión
 
+## Km al 100%, calendario de feriados y CUIL — 17 de noviembre de 2026
+
+- `npm run check`: tipos, 35 pruebas unitarias backend, 13 frontend y ambos builds aprobados. Las 84 pruebas de integración pasaron en PostgreSQL exclusivo `tomasini_test`; incluyen permisos, CSRF, idempotencia, valores históricos nulos, resolución administrativa de provisionales, concurrencia de calendario/CUIL y exportación mensual.
+- Dos migraciones declarativas y cuatro columnas opcionales verificadas con la política de CI, SQL canónico sin BOM y finales LF. Aplicadas mediante el wrapper con comprobación de base/rol en `tomasini_test`. Dos pruebas de migraciones comprobaron rechazo de destinos ajenos y reejecución sin alterar el historial. También pasaron 68 pruebas de infraestructura Python y cinco de publicación/puertos en Node.
+- Chromium, con cuentas y unidades ficticias a 390 × 844 y 1440 × 1000: alerta de año sin confirmar y enlace directo, revisión de propuesta, alta de día especial, confirmación y desaparición del aviso. La carga parcial exigió km válidos, el domingo calculó toda la distancia y un año pendiente permitió guardar como provisional. Administración confirmó ese año, validó los km desde el formulario y marcó el viaje revisado.
+- CUIL probado desde Usuarios en celular y escritorio: validación de formato, normalización, guardado, presencia en la descarga mensual real y vaciado a nulo. La exportación conserva km totales y km al 100% por separado; los valores provisionales/históricos faltantes y sus totales incompletos quedan vacíos en la planilla del contador.
+- Capturas inspeccionadas sin desbordes ni errores JavaScript. Evidencias privadas en `output/qa/km100/`, incluidos la planilla y los recorridos de prueba. Fixtures retirados y calendario de pruebas restaurado; sin cuentas de choferes reales ni correos reales. La verificación de publicación corresponde al workflow **Deploy Tomasini** del PR.
+
 ## Aviso de actualización del frontend — 16 de noviembre de 2026
 
 - Chromium probó dos builds con huellas distintas en escritorio y celular. La primera visita abrió normalmente. Tanto una pestaña con el build anterior como un usuario que volvió más tarde tuvieron que pulsar «Recargar página». La ruta, la sesión y el fragmento de invitación se conservaron tras la recarga.

@@ -4,6 +4,7 @@ import type { AuthUser } from "./auth.js";
 import { calculateStatus, dateOnly, type Reading } from "./domain.js";
 import { ensure } from "./errors.js";
 import { trailerDtos } from "./trailer-models.js";
+import { parseKm100Context } from "./holiday-domain.js";
 export { activeTrailer, validateTrailerOverlap } from "./trailer-models.js";
 import {
   adjustmentReading,
@@ -32,6 +33,8 @@ export function tripDto(row: TripRow) {
     endKm: row.endKm,
     distanceKm: row.endKm - row.startKm,
     controlCount: row.controlCount,
+    km100: row.km100,
+    km100Context: parseKm100Context(row.km100Context),
     allowance: row.allowance?.toFixed(2) ?? null,
     notes: row.notes,
     status: row.status,
@@ -128,6 +131,7 @@ export async function driverDtos(user: AuthUser, db: Tx = getDb()) {
     name: row.user.name,
     username: row.user.username,
     phone: row.phone,
+    cuil: row.cuil,
     role: row.user.role,
     accountActive: row.user.active,
     active: row.user.active,

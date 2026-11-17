@@ -6,11 +6,12 @@ import writeXlsxFile, {
 } from "write-excel-file/node";
 import { BUSINESS_TIMEZONE } from "./config.js";
 import { ensure } from "./errors.js";
+import { parseKm100Context } from "./holiday-domain.js";
 
 export interface MileageTrip {
   driverId: string;
   truckId: string;
-  driver: { user: { name: string } };
+  driver: { cuil?: string | null; user: { name: string } };
   truck: { plate: string };
   departureAt: Date;
   arrivalAt: Date;
@@ -19,6 +20,8 @@ export interface MileageTrip {
   startKm: number;
   endKm: number;
   controlCount: number | null;
+  km100?: number | null;
+  km100Context?: string | null;
 }
 
 const localDate = new Intl.DateTimeFormat("en-CA", {
@@ -154,7 +157,13 @@ function tripLine(trip: MileageTrip, slots: number, monthly: boolean) {
       ...dateAndTime(trip.arrivalAt),
       { value: compact(trip.destination), type: String, wrap: true },
       { value: trip.endKm - trip.startKm, type: Number },
-      {},
+      {
+        value:
+          parseKm100Context(trip.km100Context ?? null)?.mode === "PENDING"
+            ? undefined
+            : (trip.km100 ?? undefined),
+        type: Number,
+      },
       {},
       { value: trip.controlCount ?? undefined, type: Number },
       {},
@@ -183,6 +192,8 @@ function formSheet(
   const first = lines[0]?.trip;
   const month = first ? localDate.format(first.departureAt).slice(0, 7) : "";
   const driver = first ? compact(first.driver.user.name) : "";
+  const cuil =
+    first?.driver.cuil?.replace(/^(\d{2})(\d{8})(\d)$/, "$1-$2-$3") ?? "";
   const plate = first?.truck.plate ?? "";
   const heading = (
     value: string,
@@ -230,8 +241,8 @@ function formSheet(
       ),
       heading("CUIL:", 1),
       ...(monthly
-        ? [{ columnSpan: 6 }]
-        : [{ columnSpan: 2 }, heading("N° DE PATENTE: " + plate, 3)]),
+        ? [heading(cuil, 6)]
+        : [heading(cuil, 2), heading("N° DE PATENTE: " + plate, 3)]),
     ),
     grid(
       (monthly ? [...headers, "Patente"] : headers).map((value) => ({
@@ -259,7 +270,7 @@ function formSheet(
     const range = `${letter}5:${letter}${last}`;
     // An incomplete count must not look like the total number of controls performed.
     const complete =
-      letter === "J"
+      letter === "J" || letter === "H"
         ? `AND(COUNT(${range})>0,COUNT(${range})=COUNT(A5:A${last}))`
         : `COUNT(${range})`;
     return { type: "Formula", value: `IF(${complete},SUM(${range}),"")` };
