@@ -29,6 +29,7 @@ import {
 import {
   HOLIDAY_CALENDAR_CHANGED,
   currentHolidayYear,
+  selectHolidayBanner,
   type HolidayCalendarStatus,
   type HolidayEntry,
   type HolidayYear,
@@ -84,20 +85,8 @@ export function HolidayCalendarBanner({
       controller.abort();
     };
   }, [revision]);
-  const month = Number(
-    new Intl.DateTimeFormat("en", {
-      timeZone: "America/Argentina/Buenos_Aires",
-      month: "numeric",
-    }).format(new Date()),
-  );
-  const proposed = status?.years.find((item) => item.hasProposal);
-  const nextYear = status?.years.find(
-    (item) => item.year === status.currentYear + 1,
-  );
-  const prepareNext = status && month >= 11 && !nextYear?.confirmedAt;
-  const year = status?.needsConfirmation
-    ? status.currentYear
-    : (proposed?.year ?? (prepareNext ? status!.currentYear + 1 : null));
+  const notice = status ? selectHolidayBanner(status) : null;
+  const year = notice?.year ?? null;
   if (year === null && !error) return null;
   if (!status && !error) return null;
   return (
@@ -108,24 +97,20 @@ export function HolidayCalendarBanner({
       <CalendarDays size={23} aria-hidden="true" />
       <div className="holiday-banner-copy">
         <strong>
-          {status?.needsConfirmation
+          {notice?.kind === "unconfirmed"
             ? `Falta confirmar los feriados de ${year}`
-            : proposed
+            : notice?.kind === "proposal"
               ? `Hay novedades en los feriados de ${year}`
-              : prepareNext
-                ? `Prepará el calendario de ${year}`
-                : "No pudimos comprobar el calendario de feriados"}
+              : "No pudimos comprobar el calendario de feriados"}
         </strong>
         <p>
-          {status?.needsConfirmation
+          {notice?.kind === "unconfirmed"
             ? "Los viajes pueden cargarse, pero los pendientes de calendario necesitan esta confirmación para su revisión."
-            : proposed
+            : notice?.kind === "proposal"
               ? "Revisá la propuesta nacional antes de incorporarla al cálculo de km al 100%."
-              : prepareNext
-                ? "Revisá los feriados del próximo año antes de que comience."
-                : error}
+              : error}
         </p>
-        {error && status && (
+        {error && notice && (
           <small role="status">No pudimos actualizar este aviso. {error}</small>
         )}
       </div>
@@ -156,6 +141,7 @@ export function HolidaysPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"save" | "check" | null>(null);
+  const [sourceError, setSourceError] = useState("");
   const [loadRevision, setLoadRevision] = useState(0);
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -164,9 +150,14 @@ export function HolidaysPanel({
     reload?: boolean;
     proposal?: boolean;
   } | null>(null);
+  const draftBaseline = useRef({
+    entries: entriesKey([]),
+    proposalHash: null as string | null,
+  });
   const dirty =
     !!data &&
-    (entriesKey(entries) !== entriesKey(data.entries) || proposalHash !== null);
+    (entriesKey(entries) !== draftBaseline.current.entries ||
+      proposalHash !== draftBaseline.current.proposalHash);
   const dirtyCallback = useRef(onDirtyChange);
   dirtyCallback.current = onDirtyChange;
 
@@ -188,10 +179,19 @@ export function HolidaysPanel({
   }, [initialYear]);
 
   const adopt = useCallback((value: HolidayYear) => {
+    const initialProposal =
+      !value.confirmedAt && value.entries.length === 0 ? value.proposal : null;
+    const nextEntries = sorted(initialProposal?.entries ?? value.entries);
+    const nextProposalHash = initialProposal?.hash ?? null;
+    draftBaseline.current = {
+      entries: entriesKey(nextEntries),
+      proposalHash: nextProposalHash,
+    };
     setData(value);
-    setEntries(sorted(value.entries));
-    setProposalHash(null);
+    setEntries(nextEntries);
+    setProposalHash(nextProposalHash);
     setError("");
+    setSourceError("");
   }, []);
   useEffect(() => {
     const controller = new AbortController();
@@ -199,6 +199,7 @@ export function HolidaysPanel({
     setLoading(true);
     setData(null);
     setError("");
+    setSourceError("");
     setEditing(null);
     setConfirming(false);
     api<HolidayYear>(`/holiday-calendar/${year}`, { signal: controller.signal })
@@ -218,8 +219,8 @@ export function HolidaysPanel({
   }, [year, loadRevision, adopt]);
 
   function chooseYear(next: number) {
-    if (!Number.isInteger(next) || next < 1900 || next > 2199) {
-      setError("Elegí un año entre 1900 y 2199.");
+    if (!Number.isInteger(next) || next < 1900 || next > 9999) {
+      setError("Elegí un año de cuatro dígitos, desde 1900.");
       setYearInput(String(year));
       return;
     }
@@ -244,18 +245,29 @@ export function HolidaysPanel({
     if (busy || !data) return;
     setBusy("check");
     setError("");
+    setSourceError("");
     try {
-      adopt(await send<HolidayYear>(`/holiday-calendar/${year}/check`, "POST"));
+      const result = await send<HolidayYear>(
+        `/holiday-calendar/${year}/check`,
+        "POST",
+      );
+      adopt(result);
       window.dispatchEvent(new Event(HOLIDAY_CALENDAR_CHANGED));
-      onNotify("Búsqueda de feriados terminada.");
+      if (result.annualSourceStatus === "available")
+        onNotify("Fuente anual consultada. Revisá las novedades disponibles.");
     } catch (error) {
       // A failed source check may still update its status and editing version.
+      let savedSourceError = false;
       try {
-        adopt(await api<HolidayYear>(`/holiday-calendar/${year}`));
+        const latest = await api<HolidayYear>(`/holiday-calendar/${year}`);
+        adopt(latest);
+        savedSourceError =
+          !!latest.lastCheckError ||
+          latest.annualSourceStatus === "not_published";
       } catch {
         /* Keep the loaded calendar if its refresh also fails. */
       }
-      setError(messageOf(error));
+      if (!savedSourceError) setSourceError(messageOf(error));
       window.dispatchEvent(new Event(HOLIDAY_CALENDAR_CHANGED));
     } finally {
       setBusy(null);
@@ -328,7 +340,7 @@ export function HolidaysPanel({
               aria-label="Año del calendario"
               type="number"
               min="1900"
-              max="2199"
+              max="9999"
               value={yearInput}
               disabled={!!busy}
               onChange={(event) => setYearInput(event.target.value)}
@@ -339,7 +351,7 @@ export function HolidaysPanel({
             type="button"
             className="button ghost icon"
             aria-label="Año siguiente"
-            disabled={!!busy || year >= 2199}
+            disabled={!!busy || year >= 9999}
             onClick={() => chooseYear(year + 1)}
           >
             <ChevronRight size={19} />
@@ -387,8 +399,10 @@ export function HolidaysPanel({
                 <h3>Calendario nacional</h3>
                 <p>
                   {data.lastCheckedAt
-                    ? `Última búsqueda: ${formatDate(data.lastCheckedAt, true)}.`
-                    : "Todavía no se realizó una búsqueda para este año."}
+                    ? `Última consulta de la fuente anual: ${formatDate(data.lastCheckedAt, true)}.`
+                    : data.proposal
+                      ? "Ya hay un calendario base disponible para revisar."
+                      : "Todavía no se consultó la fuente anual para este año."}
                 </p>
               </div>
               <button
@@ -402,7 +416,7 @@ export function HolidaysPanel({
                   className={busy === "check" ? "spin" : ""}
                   aria-hidden="true"
                 />
-                {busy === "check" ? "Buscando…" : "Buscar actualización"}
+                {busy === "check" ? "Consultando…" : "Consultar fuente anual"}
               </button>
             </div>
             {dirty && (
@@ -411,32 +425,56 @@ export function HolidaysPanel({
                 actualización.
               </p>
             )}
-            {data.lastCheckError && (
+            {data.annualSourceStatus === "not_published" && (
+              <p className="holiday-source-notice" role="status">
+                La fuente anual de {year} todavía no está publicada.
+                {data.proposal?.kind === "statutory"
+                  ? " Podés revisar y confirmar el calendario base calculado; los días extraordinarios requieren revisión cuando se anuncien."
+                  : data.confirmedAt
+                    ? " Tu calendario confirmado se conserva."
+                    : " Podés completar y revisar los días del año antes de confirmarlo."}
+              </p>
+            )}
+            {(sourceError ||
+              (data.annualSourceStatus !== "not_published" &&
+                data.lastCheckError)) && (
               <p className="holiday-source-error" role="status">
                 <CircleAlert size={17} aria-hidden="true" />
-                {data.lastCheckError}
+                {sourceError || data.lastCheckError}
               </p>
             )}
             {data.proposal ? (
               <div className="holiday-proposal">
                 <div>
                   <strong>
-                    {proposalHash
-                      ? "Propuesta cargada para revisar"
-                      : "Propuesta pendiente de revisión"}
+                    {data.proposal.kind === "statutory"
+                      ? "Base nacional calculada"
+                      : proposalHash
+                        ? "Propuesta nacional cargada para revisar"
+                        : "Propuesta nacional pendiente de revisión"}
                   </strong>
                   <p>
                     {proposalHash
                       ? "Revisá las fechas de la lista y confirmá el calendario para aplicarlas."
                       : "La propuesta conserva los días especiales y los ajustes que ya guardaste."}
                   </p>
+                  {data.proposal.kind === "statutory" && (
+                    <p>
+                      Calculada con las reglas nacionales de feriados. Los días
+                      turísticos, no laborables y extraordinarios requieren
+                      revisión o carga manual.
+                    </p>
+                  )}
                   {/^https:\/\//.test(data.proposal.sourceUrl) && (
                     <a
                       href={data.proposal.sourceUrl}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Ver fuente <ExternalLink size={14} aria-hidden="true" />
+                      {data.proposal.kind === "statutory"
+                        ? "Ver reglas de feriados"
+                        : "Ver fuente anual"}{" "}
+                      <ExternalLink size={14} aria-hidden="true" />
                     </a>
                   )}
                 </div>
@@ -455,7 +493,11 @@ export function HolidaysPanel({
                   ) : (
                     <CalendarDays size={17} aria-hidden="true" />
                   )}
-                  {proposalHash ? "Lista para revisar" : "Revisar propuesta"}
+                  {proposalHash
+                    ? "Lista cargada para revisar"
+                    : data.proposal.kind === "statutory"
+                      ? "Revisar calendario base"
+                      : "Revisar propuesta"}
                 </button>
               </div>
             ) : (
@@ -490,7 +532,11 @@ export function HolidaysPanel({
                 <p>
                   {enabled}{" "}
                   {enabled === 1 ? "día habilitado" : "días habilitados"} ·{" "}
-                  {dirty ? "Cambios sin guardar" : "Lista guardada"}
+                  {dirty
+                    ? "Cambios sin guardar"
+                    : proposalHash
+                      ? "Propuesta sin confirmar"
+                      : "Lista guardada"}
                 </p>
               </div>
               <button
@@ -588,7 +634,9 @@ export function HolidaysPanel({
             <p>
               {dirty
                 ? "Tenés cambios sin guardar."
-                : "Los cambios del calendario se aplican a nuevas cargas y correcciones expresas de viajes."}
+                : proposalHash
+                  ? "La propuesta está lista para revisar. Se aplica sólo después de confirmar el calendario."
+                  : "Los cambios del calendario se aplican a nuevas cargas y correcciones expresas de viajes."}
             </p>
             <div>
               {dirty && (
