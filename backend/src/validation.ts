@@ -63,6 +63,8 @@ export const tripFields = z
       .int32("Ingresá una cantidad entera de controles.")
       .nonnegative("La cantidad de controles no puede ser negativa.")
       .nullish(),
+    km100: km.nullish(),
+    km100CalendarToken: z.string().min(1).max(256).optional(),
     allowance: money.nullable().optional(),
     notes,
   })
@@ -71,6 +73,13 @@ export const tripCreate = tripFields.extend({ clientRequestId: uuid });
 export const tripUpdate = tripFields.partial().extend({
   version: z.number().int().positive(),
   clientRequestId: uuid.optional(),
+  km100Resolve: z.boolean().optional(),
+});
+export const km100PreviewBody = tripFields.pick({
+  departureAt: true,
+  arrivalAt: true,
+  startKm: true,
+  endKm: true,
 });
 export const versionBody = z
   .object({ version: z.number().int().positive() })

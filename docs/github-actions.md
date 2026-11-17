@@ -63,7 +63,18 @@ El resumen de Actions muestra únicamente commit, SHA del release y versión ant
 2. Crear una carpeta posterior a la última migración, por ejemplo `backend/prisma/migrations/202701150001_dias_espera/`. Incluir el archivo `ci.json`:
 
    ```json
-   {"version":1,"operations":[{"op":"addNullableColumn","table":"Trip","column":"diasEspera","type":"Int","nonnegative":true}]}
+   {
+     "version": 1,
+     "operations": [
+       {
+         "op": "addNullableColumn",
+         "table": "Trip",
+         "column": "diasEspera",
+         "type": "Int",
+         "nonnegative": true
+       }
+     ]
+   }
    ```
 
 3. Generar `migration.sql` con el módulo del repositorio, sin modificar migraciones existentes. En Linux:
@@ -73,9 +84,20 @@ El resumen de Actions muestra únicamente commit, SHA del release y versión ant
    ```
 
    El SQL debe conservar sus bytes UTF-8, sin BOM y con finales de línea LF. Revisar y subir ambos archivos con el cambio del modelo. El ejemplo es ilustrativo: no hay que agregarlo para publicar código.
+
 4. CI contrasta el plan, el SQL y el esquema, y prueba la migración en PostgreSQL aislado. Después del merge, el receptor instalado en la VPS vuelve a generar el SQL desde el plan y lo aplica junto con el registro de Prisma en una sola transacción, comprobando base, esquema, rol e historial. El rol migrador de producción sigue sin LOGIN ni contraseña. Ni el release ni GitHub reciben la credencial de un propietario de la base.
 
 La política admite columnas opcionales `Int`, `BigInt`, `String` y `Boolean` en tablas existentes del esquema Tomasini; los enteros pueden exigir valores no negativos. Borrados, renombres, columnas obligatorias, nuevas tablas, SQL libre y modificaciones del historial quedan fuera de esta política: CI los detiene. Seguir el [procedimiento revisado de migración](deployment.md) si se necesita uno de esos cambios.
+
+## Operación del calendario de feriados
+
+La migración `202611170001_km100_holidays` usa el contrato anterior sin ampliarlo: agrega `Trip.km100 Int?` no negativo, `Trip.km100Context String?` y `Setting.holidayCalendar String?`. No crea tablas ni completa viajes anteriores. Los contextos y el calendario se validan como JSON en la aplicación. La propuesta precargada de 2026 se obtiene al leer una configuración nula y requiere confirmación administrativa; GET y el arranque no escriben ni ejecutan migraciones.
+
+La migración posterior `202611170002_driver_cuil` agrega `Driver.cuil String?` bajo la misma política de columnas opcionales. Los perfiles anteriores quedan sin CUIL hasta que administración lo complete; las planillas leen ese dato del perfil al descargarse.
+
+`backend/scripts/run-notifications.ts`, invocado por el timer propio de avisos existente, consulta las propuestas del año actual y siguiente como máximo una vez por día argentino. Lo hace antes del trabajo de correo, con un bloque de error separado, sin depender de SMTP, destinatario ni hora de envío. Cada descarga tiene un límite de ocho segundos y 512 KiB; no se agrega un servicio, timer ni correo. Una fuente caída conserva el calendario activo y no impide ejecutar los avisos habituales; el siguiente intento automático será otro día, o administración puede usar «Buscar actualización».
+
+La búsqueda sólo prepara novedades: en **Configuración → Feriados** se revisan y confirman, conservando días especiales y ajustes administrativos. El estado de consulta y los errores aparecen allí; los logs del runner informan cantidades y resultado sin secretos. El aviso administrativo indica el año actual sin confirmar, las propuestas pendientes y, desde noviembre, la preparación del siguiente. Confirmar o modificar el calendario no recalcula viajes guardados; los provisionales se resuelven expresamente antes de revisarlos. El [contrato de API](api-contract.md#kilómetros-al-100-y-feriados) detalla datos, permisos y exportación.
 
 ## Referencias y versiones fijadas
 

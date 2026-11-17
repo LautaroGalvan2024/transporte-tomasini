@@ -4,7 +4,7 @@ import { currentUser, requireAdmin, userDto, type AuthUser } from "./auth.js";
 import { getDb, lockTrucks, transaction } from "./db.js";
 import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
 import { ensure } from "./errors.js";
-import { uuid } from "./validation.js";
+import { instant, uuid } from "./validation.js";
 import { activeTruck, audit } from "./models.js";
 import {
   revokeDriverInvitations,
@@ -21,11 +21,25 @@ const userUpdate = z
     message: "Indicá el rol o estado que querés cambiar.",
   });
 const truckAssignment = z.object({ assignedTruckId: uuid.nullable() }).strict();
+const cuilValue = z
+  .string()
+  .max(40)
+  .transform((value) => value.replace(/[\s-]/gu, ""))
+  .refine(
+    (value) => value === "" || /^\d{11}$/.test(value),
+    "Ingresá los 11 dígitos del CUIL, con o sin guiones.",
+  )
+  .transform((value) => value || null)
+  .nullable();
+const cuilUpdate = z
+  .object({ cuil: cuilValue, expectedUpdatedAt: instant })
+  .strict();
 
 function accessDto(user: AuthUser) {
   return {
     ...userDto(user),
     assignedTruckId: user.driver?.assignedTruckId ?? null,
+    cuil: user.driver?.cuil ?? null,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
   };
@@ -40,6 +54,73 @@ export function usersRouter() {
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
     res.json({ items: rows.map(accessDto) });
+  });
+  router.patch("/:id/cuil", async (req, res) => {
+    const id = uuid.parse(req.params.id),
+      input = cuilUpdate.parse(req.body),
+      actor = currentUser(req);
+    const row = await transaction(async (tx) => {
+      await lockAccessChanges(tx);
+      await assertAdminAccess(tx, actor.id, req.sessionId);
+      const old = await tx.user.findUnique({
+        where: { id },
+        include: { driver: true },
+      });
+      ensure(old, 404, "No se encontró el usuario.", "NOT_FOUND");
+      if (old.driver)
+        await tx.$queryRaw`SELECT id FROM tomasini."Driver" WHERE id = ${old.driver.id}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM tomasini."User" WHERE id = ${id}::uuid FOR UPDATE`;
+      // A repeated save, including null without an operational profile, is a no-op.
+      if ((old.driver?.cuil ?? null) === input.cuil) return old;
+      ensure(
+        old.updatedAt.getTime() === new Date(input.expectedUpdatedAt).getTime(),
+        409,
+        "El usuario cambió desde que abriste la ficha. Actualizá la referencia antes de guardar el CUIL.",
+        "CUIL_VERSION_CONFLICT",
+      );
+      ensure(
+        old.driver || old.active,
+        409,
+        "Reactivá al usuario antes de crear sus datos como conductor.",
+        "USER_INACTIVE",
+      );
+      const driver = old.driver
+        ? await tx.driver.update({
+            where: { id: old.driver.id },
+            data: { cuil: input.cuil },
+          })
+        : await tx.driver.create({
+            data: { userId: old.id, cuil: input.cuil },
+          });
+      const updated = await tx.user.update({
+        where: { id },
+        data: {
+          updatedAt: new Date(
+            Math.max(Date.now(), old.updatedAt.getTime() + 1),
+          ),
+        },
+        include: { driver: true },
+      });
+      await audit(
+        tx,
+        actor.id,
+        "USER",
+        id,
+        "CUIL_UPDATED",
+        {
+          driverId: old.driver?.id ?? null,
+          cuil: old.driver?.cuil ?? null,
+          updatedAt: old.updatedAt.toISOString(),
+        },
+        {
+          driverId: driver.id,
+          cuil: driver.cuil,
+          updatedAt: updated.updatedAt.toISOString(),
+        },
+      );
+      return updated;
+    });
+    res.json(accessDto(row));
   });
   router.patch("/:id/truck", async (req, res) => {
     const id = uuid.parse(req.params.id);

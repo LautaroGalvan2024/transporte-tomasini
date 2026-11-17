@@ -57,6 +57,7 @@ model Driver {
   id              String       @id @default(uuid()) @db.Uuid
   userId          String       @unique @db.Uuid
   phone           String?      @db.VarChar(40)
+  cuil            String?
   assignedTruckId String?      @db.Uuid
   user            User         @relation(fields: [userId], references: [id])
   assignedTruck   Truck?       @relation(fields: [assignedTruckId], references: [id])
@@ -111,6 +112,8 @@ model Trip {
   startKm         Int
   endKm           Int
   controlCount    Int?
+  km100           Int?
+  km100Context    String?
   allowance       Decimal?   @db.Decimal(14, 2)
   notes           String?    @db.VarChar(2000)
   status          TripStatus @default(ACTIVE)
@@ -195,6 +198,7 @@ model Setting {
   recipientEmail String? @db.VarChar(254)
   warningDays    Int     @default(30)
   warningKm      Int     @default(1000)
+  holidayCalendar String?
   @@schema("tomasini")
 }
 

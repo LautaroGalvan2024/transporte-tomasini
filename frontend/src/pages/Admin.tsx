@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -55,7 +61,13 @@ import {
   formatMoney,
 } from "../ui";
 import "../admin.css";
+import "../user-cuil.css";
 import { TrailersPanel } from "./Trailers";
+import { HolidaysPanel } from "./Holidays";
+import {
+  holidayYearFromLocation,
+  type HolidayNavigation,
+} from "../holiday-types";
 
 const TIMEZONE = "America/Argentina/Buenos_Aires";
 const dateToday = () =>
@@ -1390,6 +1402,153 @@ function UserTruckForm({
   );
 }
 
+const cuilLabel = (value: string | null | undefined) =>
+  value
+    ? `${value.slice(0, 2)}-${value.slice(2, 10)}-${value.slice(10)}`
+    : "Sin informar";
+
+function UserCuilForm({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: UserAccess;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reference, setReference] = useState(account);
+  const [value, setValue] = useState(
+    account.cuil ? cuilLabel(account.cuil) : "",
+  );
+  const [conflict, setConflict] = useState(false);
+  const [refreshed, setRefreshed] = useState(false);
+  const form = useFormStatus();
+  async function refreshReference() {
+    if (form.busy) return;
+    form.begin();
+    try {
+      const result = await api<{ items: UserAccess[] }>("/users");
+      const latest = result.items.find((item) => item.id === account.id);
+      if (!latest) throw new Error("No se encontró el usuario.");
+      setReference(latest);
+      setConflict(false);
+      setRefreshed(true);
+      form.clear();
+    } catch (error) {
+      form.fail(error);
+    }
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (form.busy || conflict) return;
+    const normalized = value.replace(/[\s-]/gu, "");
+    if (normalized !== "" && !/^\d{11}$/.test(normalized)) {
+      form.fail(
+        new ApiError("Revisá el CUIL.", 400, {
+          cuil: "Ingresá los 11 dígitos, con o sin guiones.",
+        }),
+      );
+      return;
+    }
+    form.begin();
+    try {
+      await send(`/users/${account.id}/cuil`, "PATCH", {
+        cuil: normalized || null,
+        expectedUpdatedAt: reference.updatedAt,
+      });
+      onSaved();
+    } catch (error) {
+      setConflict(
+        error instanceof ApiError && error.code === "CUIL_VERSION_CONFLICT",
+      );
+      form.fail(error);
+    }
+  }
+  return (
+    <Modal
+      title="CUIL del conductor"
+      dismissible={!form.busy}
+      onClose={() => {
+        if (!form.busy) onClose();
+      }}
+    >
+      <form className="admin-form" onSubmit={submit}>
+        <div className="admin-access-person">
+          <FileCheck2 size={24} />
+          <div>
+            <strong>{account.name}</strong>
+            <span>{account.username}</span>
+          </div>
+        </div>
+        <p className="admin-form-intro">
+          Se usará en el encabezado de la planilla para el contador. Podés
+          dejarlo vacío si todavía no lo tenés.
+        </p>
+        <Field
+          label="CUIL (opcional)"
+          error={form.fields.cuil}
+          hint="11 dígitos. Ejemplo de formato: 20-12345678-9."
+        >
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={40}
+            value={value}
+            disabled={form.busy}
+            placeholder="00-00000000-0"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Field>
+        {!reference.driverId && (
+          <p className="admin-field-note">
+            Al guardar un CUIL, esta persona quedará disponible como conductor
+            para sus viajes. Conserva su rol y su acceso actual.
+          </p>
+        )}
+        {refreshed && (
+          <div className="admin-cuil-reference" role="status">
+            <strong>CUIL guardado ahora: {cuilLabel(reference.cuil)}</strong>
+            <span>
+              Conservamos lo que escribiste. Revisalo antes de guardar.
+            </span>
+          </div>
+        )}
+        <FormError message={form.message} />
+        {conflict && (
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={() => void refreshReference()}
+          >
+            <RefreshCw size={17} />
+            Actualizar referencia
+          </button>
+        )}
+        <div className="admin-form-footer">
+          <button
+            type="button"
+            className="button secondary"
+            disabled={form.busy}
+            onClick={onClose}
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            className="button primary"
+            disabled={form.busy || conflict}
+          >
+            {form.busy ? "Guardando…" : "Guardar CUIL"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export function UsersPage({ user, onNotify }: PageProps) {
   const accounts = useLoad<{ items: UserAccess[] }>("/users");
   const drivers = useLoad<{ items: Driver[] }>("/drivers");
@@ -1399,8 +1558,9 @@ export function UsersPage({ user, onNotify }: PageProps) {
   const [editing, setEditing] = useState<UserAccess | null>(null);
   const [statusAccount, setStatusAccount] = useState<UserAccess | null>(null);
   const [truckAccount, setTruckAccount] = useState<UserAccess | null>(null);
+  const [cuilAccount, setCuilAccount] = useState<UserAccess | null>(null);
   const [inviting, setInviting] = useState(false);
-  const pageSize = usePageSize(360, 84);
+  const pageSize = usePageSize(360, 104);
   const items =
     accounts.data?.items.filter(
       (item) =>
@@ -1483,6 +1643,19 @@ export function UsersPage({ user, onNotify }: PageProps) {
                     {account.username}
                     {account.id === user.id ? " · Vos" : ""}
                   </p>
+                  {(account.driverId || account.active) && (
+                    <button
+                      type="button"
+                      className="admin-cuil-link"
+                      onClick={() => setCuilAccount(account)}
+                      aria-label={`Editar CUIL de ${account.name}`}
+                    >
+                      <FileCheck2 size={14} aria-hidden="true" />
+                      {account.cuil
+                        ? `CUIL ${cuilLabel(account.cuil)}`
+                        : "Completar CUIL"}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="admin-row-secondary admin-row-value">
@@ -1565,6 +1738,18 @@ export function UsersPage({ user, onNotify }: PageProps) {
             onPage={paged.setPage}
           />
         </section>
+      )}
+      {cuilAccount && (
+        <UserCuilForm
+          account={cuilAccount}
+          onClose={() => setCuilAccount(null)}
+          onSaved={() => {
+            setCuilAccount(null);
+            accounts.reload();
+            drivers.reload();
+            onNotify("CUIL actualizado.");
+          }}
+        />
       )}
       {truckAccount && (
         <UserTruckForm
@@ -3533,8 +3718,7 @@ export function ReportsPage({ onNotify }: PageProps) {
   const monthlyDriver = drivers.data?.items.find(
     (driver) => driver.id === monthlyDriverId,
   );
-  const monthlyReady =
-    !!monthlyDriver && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+  const monthlyReady = !!monthlyDriver && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
   async function download(format: "monthly" | "detail") {
     if (exporting) return;
     if (format === "monthly" && !monthlyReady) return;
@@ -3620,7 +3804,9 @@ export function ReportsPage({ onNotify }: PageProps) {
               onClick={() => download("detail")}
             >
               <ArrowDownToLine size={17} />
-              {exporting === "detail" ? "Preparando detalle…" : "Detalle operativo"}
+              {exporting === "detail"
+                ? "Preparando detalle…"
+                : "Detalle operativo"}
             </button>
           </div>
         }
@@ -3642,15 +3828,17 @@ export function ReportsPage({ onNotify }: PageProps) {
             }}
           >
             <p className="admin-form-intro">
-              Descargá en un solo Excel todos los viajes del chofer con salida en el mes elegido.
+              Descargá en un solo Excel todos los viajes del chofer con salida
+              en el mes elegido.
             </p>
             <LoadState
               loading={drivers.loading}
               error={drivers.error}
               retry={drivers.reload}
             />
-            {!drivers.loading && !drivers.error && (
-              drivers.data?.items.length ? (
+            {!drivers.loading &&
+              !drivers.error &&
+              (drivers.data?.items.length ? (
                 <>
                   <Field label="Chofer">
                     <select
@@ -3699,8 +3887,7 @@ export function ReportsPage({ onNotify }: PageProps) {
                 </>
               ) : (
                 <p role="status">Todavía no hay choferes registrados.</p>
-              )
-            )}
+              ))}
           </form>
         </Modal>
       )}
@@ -4001,27 +4188,71 @@ function SettingsForm({
     </form>
   );
 }
-export function SettingsPage({ onNotify }: PageProps) {
+export function SettingsPage({
+  onNotify,
+  holidayNavigation,
+  onDirtyChange,
+}: PageProps & {
+  holidayNavigation?: HolidayNavigation | null;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
   const settings = useLoad<Settings>("/settings");
   const notifications = useLoad<{ items: Notification[] }>("/notifications");
-  const [tab, setTab] = useState("settings");
+  const [tab, setTab] = useState(
+    holidayNavigation || holidayYearFromLocation() !== null
+      ? "holidays"
+      : "settings",
+  );
+  const [holidayYear, setHolidayYear] = useState<number | undefined>(
+    holidayNavigation?.year ?? holidayYearFromLocation() ?? undefined,
+  );
+  const [holidayDirty, setHolidayDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<string | null>(null);
+  const handleHolidayDirty = useCallback(
+    (dirty: boolean) => {
+      setHolidayDirty(dirty);
+      onDirtyChange?.(dirty);
+    },
+    [onDirtyChange],
+  );
+  useEffect(() => {
+    if (holidayNavigation) {
+      setHolidayYear(holidayNavigation.year);
+      setTab("holidays");
+    }
+  }, [holidayNavigation]);
+  function chooseTab(next: string) {
+    if (next === tab) return;
+    if (holidayDirty) setPendingTab(next);
+    else setTab(next);
+  }
   const pageSize = usePageSize(430, 100);
   const paged = usePagination(notifications.data?.items || [], pageSize);
   return (
     <div className="admin-page">
-      <PageHeading title="Preferencias" />
-      <div className="admin-tabs" aria-label="Preferencias e historial">
+      <PageHeading title="Configuración" />
+      <div
+        className="admin-tabs holiday-settings-tabs"
+        aria-label="Configuración e historial"
+      >
         <button
           className={tab === "settings" ? "active" : ""}
           aria-pressed={tab === "settings"}
-          onClick={() => setTab("settings")}
+          onClick={() => chooseTab("settings")}
         >
           Avisos
         </button>
         <button
+          className={tab === "holidays" ? "active" : ""}
+          aria-pressed={tab === "holidays"}
+          onClick={() => chooseTab("holidays")}
+        >
+          Feriados
+        </button>
+        <button
           className={tab === "history" ? "active" : ""}
           aria-pressed={tab === "history"}
-          onClick={() => setTab("history")}
+          onClick={() => chooseTab("history")}
         >
           Historial de correos
         </button>
@@ -4044,6 +4275,12 @@ export function SettingsPage({ onNotify }: PageProps) {
             />
           )}
         </>
+      ) : tab === "holidays" ? (
+        <HolidaysPanel
+          initialYear={holidayYear}
+          onNotify={onNotify}
+          onDirtyChange={handleHolidayDirty}
+        />
       ) : (
         <>
           <LoadState
@@ -4111,6 +4348,39 @@ export function SettingsPage({ onNotify }: PageProps) {
             </section>
           )}
         </>
+      )}
+      {pendingTab && (
+        <Modal
+          title="Hay cambios sin guardar"
+          onClose={() => setPendingTab(null)}
+        >
+          <div className="holiday-confirm">
+            <p>
+              Si cambiás de sección, se perderán los cambios que todavía no
+              guardaste en el calendario.
+            </p>
+            <div className="holiday-modal-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setPendingTab(null)}
+              >
+                Seguir editando
+              </button>
+              <button
+                type="button"
+                className="button danger"
+                onClick={() => {
+                  setTab(pendingTab);
+                  setPendingTab(null);
+                  handleHolidayDirty(false);
+                }}
+              >
+                Descartar y continuar
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -59,6 +59,8 @@ import { Brand } from "./Brand";
 import { InstalledVersion } from "./FrontendVersion";
 import { useInstallShortcut } from "./InstallShortcut";
 import { JoinPage } from "./pages/Join";
+import { HolidayCalendarBanner } from "./pages/Holidays";
+import { holidayYearFromLocation, type HolidayNavigation } from "./holiday-types";
 const shortcutItem = {
   id: "install-shortcut",
   label: "Crear acceso directo",
@@ -92,6 +94,8 @@ export function App() {
     [online, setOnline] = useState(navigator.onLine),
     [reauth, setReauth] = useState(false),
     [joinRevision, setJoinRevision] = useState(0);
+  const [holidayNavigation, setHolidayNavigation] = useState<HolidayNavigation | null>(null);
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const navigationRef = useRef({ page, dirtyForm });
   navigationRef.current = { page, dirtyForm };
   const check = useCallback(() => {
@@ -112,6 +116,7 @@ export function App() {
     const pop = () => {
       const target = pathnamePage();
       if (navigationRef.current.dirtyForm) {
+        const targetWithQuery = target + location.search;
         history.pushState(
           {},
           "",
@@ -119,10 +124,14 @@ export function App() {
             ? "/"
             : `/${navigationRef.current.page}`,
         );
-        setPendingNavigation(target);
+        setPendingNavigation(targetWithQuery);
         return;
       }
       setPage(target);
+      setNavigationRevision((value) => value + 1);
+      const holidayYear = holidayYearFromLocation();
+      if (target === "settings" && holidayYear !== null)
+        setHolidayNavigation({ year: holidayYear, request: Date.now() });
       if (target !== "new-trip") setEditTrip(null);
       setMobileMenu(false);
     };
@@ -138,11 +147,17 @@ export function App() {
     };
   }, []);
   const performNavigate = useCallback((next: string) => {
+    const nextPage = next.split("?")[0];
     setDirtyForm(false);
-    if (next !== "new-trip") setEditTrip(null);
-    setPage(next);
+    if (nextPage !== "new-trip") setEditTrip(null);
+    setPage(nextPage);
+    setNavigationRevision((value) => value + 1);
     setMobileMenu(false);
     history.pushState({}, "", next === "home" ? "/" : `/${next}`);
+    const holidayYear = holidayYearFromLocation();
+    setHolidayNavigation(nextPage === "settings" && holidayYear !== null
+      ? { year: holidayYear, request: Date.now() }
+      : null);
     window.scrollTo({ top: 0, behavior: "instant" });
   }, []);
   const navigate = useCallback(
@@ -334,7 +349,7 @@ export function App() {
         );
       case "settings":
         return user?.role === "ADMIN" ? (
-          <SettingsPage {...props} />
+          <SettingsPage {...props} holidayNavigation={holidayNavigation} onDirtyChange={setDirtyForm} />
         ) : (
           <DriverHome {...props} />
         );
@@ -411,8 +426,11 @@ export function App() {
         <main
           id="main"
           className={`main-content main-page-${page} ${isForm ? "main-form" : ""}`}
-          key={`${page}-${editTrip || ""}`}
+          key={`${page}-${editTrip || ""}-${navigationRevision}`}
         >
+          {user.role === "ADMIN" && !user.mustChangePassword && (
+            <HolidayCalendarBanner onReview={(year) => navigate(`settings?tab=holidays&year=${year}`)} />
+          )}
           {content()}
         </main>
       </div>
@@ -473,20 +491,21 @@ export function App() {
       )}
       {pendingNavigation && (
         <Modal
-          title="Tu viaje todavía no está guardado"
+          title={isForm ? "Tu viaje todavía no está guardado" : "Hay cambios sin guardar"}
           onClose={() => setPendingNavigation(null)}
         >
           <div className="modal-body">
             <p>
-              Si salís de esta pantalla, se perderá lo que ingresaste. Podés
-              volver a la carga y guardarlo.
+              {isForm
+                ? "Si salís de esta pantalla, se perderá lo que ingresaste. Podés volver a la carga y guardarlo."
+                : "Si salís de esta pantalla, se perderán los cambios que todavía no guardaste en el calendario."}
             </p>
             <div className="row-actions">
               <button
                 className="button secondary"
                 onClick={() => setPendingNavigation(null)}
               >
-                Seguir cargando
+                {isForm ? "Seguir cargando" : "Seguir editando"}
               </button>
               <button
                 className="button danger"

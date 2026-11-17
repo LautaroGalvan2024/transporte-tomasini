@@ -104,6 +104,7 @@ test(
       arrivalAt,
       startKm,
       endKm,
+      km100: 0,
     });
     let originalTripId = "",
       recentTripId = "",
@@ -305,7 +306,7 @@ test(
           const oldCorrection = await patch(
             adminAgent,
             `/trips/${originalTripId}`,
-            { version: 1, endKm: 1100 },
+            { version: 1, endKm: 1100, km100: 0 },
           );
           assert.equal(
             oldCorrection.status,

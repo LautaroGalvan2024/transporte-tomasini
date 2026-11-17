@@ -9,6 +9,7 @@ import { hashPassword } from "../src/password.js";
 import { getConfig, validateDatabaseUrl } from "../src/config.js";
 import { runNotificationJob } from "../src/notifications.js";
 import { businessDay } from "../src/domain.js";
+import { resolveFixtureKm100 } from "./km100-fixtures.js";
 
 const enabled =
   process.env.TOMASINI_INTEGRATION === "1" || process.env.NODE_ENV === "test";
@@ -178,6 +179,7 @@ test(
         startKm: 1100,
         endKm: 1300,
         controlCount: 0,
+        km100: 0,
         allowance: "1250.50",
         notes: "Prueba",
       };
@@ -302,6 +304,8 @@ test(
       await t.test(
         "revisión, corrección administrativa y control de versiones",
         async () => {
+          version = (await resolveFixtureKm100(adminAgent, origin, tripId))
+            .version;
           const reviewed = await post(adminAgent, `/trips/${tripId}/review`, {
             version,
           });
@@ -324,6 +328,7 @@ test(
           assert.equal(stale.status, 409);
           const corrected = await patch(adminAgent, `/trips/${tripId}`, {
             endKm: 1320,
+            km100: 0,
             controlCount: 2,
             notes: "Corregido",
             version,
@@ -334,7 +339,8 @@ test(
           version = corrected.body.version;
           const history = await adminAgent.get(`/api/trips/${tripId}/history`);
           const correction = history.body.items.find(
-            (entry: { action: string }) => entry.action === "UPDATED",
+            (entry: { action: string; after: { controlCount?: number } }) =>
+              entry.action === "UPDATED" && entry.after.controlCount === 2,
           );
           assert.equal(correction.before.controlCount, 0);
           assert.equal(correction.after.controlCount, 2);

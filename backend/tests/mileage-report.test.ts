@@ -21,6 +21,53 @@ const trip: MileageTrip = {
   controlCount: 0,
 };
 
+test("el CUIL opcional se imprime como texto en el encabezado de ambas planillas", async () => {
+  for (const report of [mileageReport, monthlyMileageReport]) {
+    const files = unzipSync(
+      await report([
+        { ...trip, driver: { ...trip.driver, cuil: "20123456786" } },
+      ]),
+    );
+    assert.match(strFromU8(files["xl/sharedStrings.xml"]), /20-12345678-6/);
+    const blank = unzipSync(
+      await report([{ ...trip, driver: { ...trip.driver, cuil: null } }]),
+    );
+    assert.match(strFromU8(blank["xl/sharedStrings.xml"]), /CUIL:/);
+    assert.doesNotMatch(
+      strFromU8(blank["xl/sharedStrings.xml"]),
+      /20-12345678-6|undefined|>null</,
+    );
+  }
+});
+
+test("km al 100% conserva total recorrido, cero y faltantes sin sumar importes provisionales", async () => {
+  const context = JSON.stringify({
+    schemaVersion: 1,
+    mode: "PENDING",
+    calendarToken: "a".repeat(64),
+    missingYears: [2026],
+    intervals: [],
+    suggestedKm: null,
+  });
+  for (const report of [mileageReport, monthlyMileageReport]) {
+    const files = unzipSync(
+      await report([
+        { ...trip, km100: 80 },
+        { ...trip, km100: 0 },
+        { ...trip, km100: null },
+        { ...trip, km100: 35, km100Context: context },
+      ]),
+    );
+    const sheet = strFromU8(files["xl/worksheets/sheet1.xml"]);
+    assert.match(sheet, /<c r="G5"[^>]*><v>172<\/v>/);
+    assert.match(sheet, /<c r="H5"[^>]*><v>80<\/v>/);
+    assert.match(sheet, /<c r="H6"[^>]*><v>0<\/v>/);
+    assert.match(sheet, /<c r="H7"[^>]*\/>/);
+    assert.match(sheet, /<c r="H8"[^>]*\/>/);
+    assert.match(sheet, /COUNT\(H5:H\d+\)=COUNT\(A5:A\d+\)/);
+  }
+});
+
 test("la planilla usa fechas y horas argentinas y conserva cero, faltantes y texto literal", async () => {
   const files = unzipSync(
     await mileageReport([trip, { ...trip, controlCount: null }]),
