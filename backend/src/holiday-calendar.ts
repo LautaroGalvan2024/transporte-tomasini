@@ -15,8 +15,11 @@ import {
   mergeOfficialEntries,
   type HolidayCalendar,
   type HolidayEntry,
-  type HolidayYearState,
 } from "./holiday-domain.js";
+import {
+  statutoryHolidayEntries,
+  STATUTORY_SOURCE_URL,
+} from "./holiday-preload.js";
 export {
   evaluateKm100,
   createKm100Context,
@@ -24,7 +27,7 @@ export {
 } from "./holiday-domain.js";
 
 export const HOLIDAY_CALENDAR_AUDIT_ID = "8242a166-13b5-449d-9858-f5f4491caa30";
-const yearSchema = z.coerce.number().int().min(1900).max(2199);
+const yearSchema = z.coerce.number().int().min(1900).max(9999);
 export const officialCalendarUrl = (year: number) =>
   `https://www.argentina.gob.ar/sites/default/files/holidays-${yearSchema.parse(year)}-es.json`;
 const SEED_CHECKED_AT = "2026-11-17T00:00:00.000Z";
@@ -58,25 +61,51 @@ const seed2026 = [
   enabled: true,
 }));
 
+function withPreloadedCalendars(
+  calendar: HolidayCalendar,
+  requestedYears?: number[],
+): HolidayCalendar {
+  const result = structuredClone(calendar);
+  const currentYear = Number(argentinaDay().slice(0, 4));
+  const years = requestedYears ?? [
+    2026, currentYear, currentYear + 1, ...Object.keys(calendar.years).map(Number),
+  ];
+  for (const year of new Set(years)) {
+    if (year < 2026 || year > 9999) continue;
+    const state = result.years[year] ?? emptyHolidayYear(year);
+    // Existing installations may already contain an empty year after a failed
+    // lookup. Supply its proposal without changing active data or its version.
+    // A consumed proposal (including an intentionally empty calendar) stays so.
+    if (
+      state.confirmedAt || state.proposal || state.lastOfficialHash ||
+      state.officialBaseline.length
+    )
+      continue;
+    const entries = year === 2026
+      ? structuredClone(seed2026) : statutoryHolidayEntries(year);
+    const hash = entriesHash(entries);
+    state.proposal = {
+      kind: year === 2026 ? "official" : "statutory",
+      hash,
+      checkedAt: SEED_CHECKED_AT,
+      sourceUrl: year === 2026 ? officialCalendarUrl(year) : STATUTORY_SOURCE_URL,
+      entries: mergeOfficialEntries(state, entries),
+      sourceEntries: entries,
+    };
+    state.lastOfficialHash = hash;
+    result.years[year] = state;
+  }
+  return result;
+}
 export function initialCalendar(): HolidayCalendar {
-  const year = emptyHolidayYear(2026),
-    hash = entriesHash(seed2026);
-  year.proposal = {
-    hash,
-    checkedAt: SEED_CHECKED_AT,
-    sourceUrl: officialCalendarUrl(2026),
-    entries: structuredClone(seed2026),
-    sourceEntries: structuredClone(seed2026),
-  };
-  year.lastOfficialHash = hash;
-  return { schemaVersion: 1, years: { "2026": year }, lastSyncDay: null };
+  return withPreloadedCalendars({ schemaVersion: 1, years: {}, lastSyncDay: null });
 }
 export function parseCalendar(
   value: string | null | undefined,
 ): HolidayCalendar {
   if (value == null) return initialCalendar();
   try {
-    return holidayCalendarSchema.parse(JSON.parse(value));
+    return withPreloadedCalendars(holidayCalendarSchema.parse(JSON.parse(value)));
   } catch {
     throw new AppError(
       503,
@@ -118,7 +147,8 @@ async function persistCalendar(tx: Tx, calendar: HolidayCalendar) {
   });
 }
 export function holidayYearDto(calendar: HolidayCalendar, year: number) {
-  const state = calendar.years[year] ?? emptyHolidayYear(year);
+  const state = withPreloadedCalendars(calendar, [year]).years[year]
+    ?? emptyHolidayYear(year);
   return {
     year,
     version: state.version,
@@ -128,6 +158,7 @@ export function holidayYearDto(calendar: HolidayCalendar, year: number) {
     proposal: state.proposal
       ? {
           hash: state.proposal.hash,
+          kind: state.proposal.kind ?? "official",
           checkedAt: state.proposal.checkedAt,
           sourceUrl: state.proposal.sourceUrl,
           entries: state.proposal.entries,
@@ -135,6 +166,9 @@ export function holidayYearDto(calendar: HolidayCalendar, year: number) {
       : null,
     lastCheckedAt: state.lastCheckedAt,
     lastCheckError: state.lastCheckError,
+    annualSourceStatus: state.annualSourceStatus ??
+      (state.lastCheckError ? "unavailable"
+        : state.lastCheckedAt ? "available" : "unchecked"),
   };
 }
 export function holidayCalendarStatus(
@@ -176,7 +210,8 @@ export function updateHolidayYear(
     400,
     "Las fechas deben pertenecer al año seleccionado.",
   );
-  const previous = calendar.years[year] ?? emptyHolidayYear(year);
+  const previous = withPreloadedCalendars(calendar, [year]).years[year]
+    ?? emptyHolidayYear(year);
   ensure(
     input.version === previous.version,
     409,
@@ -271,6 +306,11 @@ export function parseOfficialCalendar(
     throw new Error("El calendario oficial parece incompleto.");
   return [...dates.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
+export class HolidaySourceNotPublishedError extends Error {
+  constructor() {
+    super("Todavía no hay un calendario anual publicado para este año.");
+  }
+}
 export async function downloadOfficialCalendar(
   year: number,
   fetcher: typeof fetch = fetch,
@@ -282,6 +322,7 @@ export async function downloadOfficialCalendar(
   });
   if (!response.ok || !response.body) {
     await response.body?.cancel().catch(() => undefined);
+    if (response.status === 404) throw new HolidaySourceNotPublishedError();
     throw new Error("Fuente oficial no disponible.");
   }
   if (Number(response.headers.get("content-length") ?? 0) > 524_288) {
@@ -315,17 +356,21 @@ export function applyOfficialCheck(
   year: number,
   entries: HolidayEntry[] | null,
   now = new Date(),
+  outcome: "not_published" | "unavailable" = "unavailable",
 ): HolidayCalendar {
-  const state = structuredClone(calendar.years[year] ?? emptyHolidayYear(year));
+  const state = withPreloadedCalendars(calendar, [year]).years[year]
+    ?? emptyHolidayYear(year);
   state.version++;
   state.lastCheckedAt = now.toISOString();
-  state.lastCheckError = entries
+  state.annualSourceStatus = entries ? "available" : outcome;
+  state.lastCheckError = entries || outcome === "not_published"
     ? null
-    : "No se pudo consultar un calendario oficial completo para este año. Se conserva la información anterior.";
+    : "No se pudo consultar la publicación anual. Se conserva el calendario disponible; podés revisarlo y confirmarlo.";
   if (entries) {
     const hash = entriesHash(entries);
-    if (hash !== state.lastOfficialHash) {
+    if (hash !== state.lastOfficialHash || state.proposal?.kind === "statutory") {
       state.proposal = {
+        kind: "official",
         hash,
         checkedAt: now.toISOString(),
         sourceUrl: officialCalendarUrl(year),
@@ -376,33 +421,38 @@ export function holidayCalendarRouter() {
     const year = yearSchema.parse(req.params.year),
       user = currentUser(req);
     let entries: HolidayEntry[] | null = null;
+    let outcome: "not_published" | "unavailable" = "unavailable";
     try {
       entries = await downloadOfficialCalendar(year);
-    } catch {
-      /* Preserve active entries and report a safe error. */
+    } catch (error) {
+      if (error instanceof HolidaySourceNotPublishedError)
+        outcome = "not_published";
     }
     const calendar = await calendarTransaction(async (tx) => {
       await lockAccessChanges(tx);
       await assertAdminAccess(tx, user.id, req.sessionId);
       await lockCalendar(tx);
       const before = await getCalendar(tx),
-        after = applyOfficialCheck(before, year, entries);
+        after = applyOfficialCheck(before, year, entries, new Date(), outcome);
       await persistCalendar(tx, after);
       await audit(
         tx,
         user.id,
         "HOLIDAY_CALENDAR",
         HOLIDAY_CALENDAR_AUDIT_ID,
-        entries ? "CHECKED" : "CHECK_FAILED",
+        entries ? "CHECKED"
+          : outcome === "not_published" ? "NOT_PUBLISHED" : "CHECK_FAILED",
         holidayYearDto(before, year),
         holidayYearDto(after, year),
       );
       return after;
     });
-    if (!entries)
+    const state = calendar.years[year];
+    if (!entries && !state.confirmedAt && !state.entries.length && !state.proposal)
       throw new AppError(
         502,
-        holidayYearDto(calendar, year).lastCheckError!,
+        state.lastCheckError ??
+          "Todavía no hay un calendario anual publicado para este año. Podés completar las fechas manualmente.",
         "HOLIDAY_SOURCE_UNAVAILABLE",
       );
     res.json(holidayYearDto(calendar, year));
@@ -438,13 +488,19 @@ export async function runHolidayCalendarSync(
           year + index,
           result.status === "fulfilled" ? result.value : null,
           now,
+          result.status === "rejected" &&
+          result.reason instanceof HolidaySourceNotPublishedError
+            ? "not_published" : "unavailable",
         ),
       );
     });
   }
   return {
     checked: results.length,
-    failed: results.filter((result) => result.status === "rejected").length,
+    failed: results.filter((result) => result.status === "rejected" &&
+      !(result.reason instanceof HolidaySourceNotPublishedError)).length,
+    unpublished: results.filter((result) => result.status === "rejected" &&
+      result.reason instanceof HolidaySourceNotPublishedError).length,
     reason: "consulta diaria completada",
   };
 }

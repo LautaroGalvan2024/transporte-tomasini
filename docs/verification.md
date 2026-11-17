@@ -1,5 +1,12 @@
 # Verificación de la primera versión
 
+## Calendarios recurrentes y aviso anual — 17 de noviembre de 2026
+
+- Tipos y builds correctos; 47 pruebas unitarias backend, 18 frontend y 89 pruebas de integración con PostgreSQL aislado. Se verificaron reglas móviles, años posteriores a 2030, fechas coincidentes, hidratación de JSON existente, consultas sin escritura y preservación de confirmados.
+- El adaptador diferencia archivo anual no publicado (404) de error técnico. Ambos conservan la base o el calendario disponible; una fuente oficial posterior crea una propuesta revisable. Las consultas repetidas no reabren calendarios ya confirmados.
+- Chromium con administrador ficticio, 390 × 844 y 1440 × 1000: año 2027 vacío de una instalación anterior muestra 16 fechas sin aviso global; consulta 404 informativa y error 503 único, sin pérdida de fechas; navegación a 2035 y 2200 sin límite de precarga. Un cambio de año simulado en la respuesta de estado al navegador mostró el aviso del año actual, y una confirmación real por API/PostgreSQL lo retiró. Sin errores JS ni desbordes. Evidencia local ignorada en `output/qa/holiday-fix/`.
+- No hay migración SQL ni modificación de calendarios confirmados en producción. Las propuestas calculadas se ofrecen al leer y se materializan sólo con una operación administrativa o sincronización existente.
+
 ## Km al 100%, calendario de feriados y CUIL — 17 de noviembre de 2026
 
 - `npm run check`: tipos, 35 pruebas unitarias backend, 13 frontend y ambos builds aprobados. Las 84 pruebas de integración pasaron en PostgreSQL exclusivo `tomasini_test`; incluyen permisos, CSRF, idempotencia, valores históricos nulos, resolución administrativa de provisionales, concurrencia de calendario/CUIL y exportación mensual.

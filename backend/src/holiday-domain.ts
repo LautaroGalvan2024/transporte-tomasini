@@ -37,6 +37,7 @@ const entriesSchema = z
   });
 const proposalSchema = z
   .object({
+    kind: z.enum(["official", "statutory"]).optional(),
     hash: z.string().regex(/^[a-f0-9]{64}$/),
     checkedAt: z.iso.datetime(),
     sourceUrl: z.url(),
@@ -46,7 +47,7 @@ const proposalSchema = z
   .strict();
 const yearStateSchema = z
   .object({
-    year: z.number().int().min(1900).max(2199),
+    year: z.number().int().min(1900).max(9999),
     version: z.number().int().nonnegative(),
     revision: z.number().int().nonnegative(),
     confirmedAt: z.iso.datetime().nullable(),
@@ -58,6 +59,9 @@ const yearStateSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .nullable(),
     lastCheckedAt: z.iso.datetime().nullable(),
+    annualSourceStatus: z
+      .enum(["unchecked", "available", "not_published", "unavailable"])
+      .optional(),
     lastCheckError: z.string().max(300).nullable(),
   })
   .strict()

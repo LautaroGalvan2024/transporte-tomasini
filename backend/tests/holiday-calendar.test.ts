@@ -9,13 +9,18 @@ import {
   holidayCalendarStatus,
   holidayYearDto,
   HOLIDAY_CALENDAR_AUDIT_ID,
+  HolidaySourceNotPublishedError,
   initialCalendar,
   parseCalendar,
   parseOfficialCalendar,
   runHolidayCalendarSync,
   updateHolidayYear,
 } from "../src/holiday-calendar.js";
-import { evaluateKm100, type HolidayEntry } from "../src/holiday-domain.js";
+import {
+  emptyHolidayYear,
+  evaluateKm100,
+  type HolidayEntry,
+} from "../src/holiday-domain.js";
 import { createApp } from "../src/app.js";
 import { assertDatabaseScope, disconnect, getDb } from "../src/db.js";
 import { getConfig, validateDatabaseUrl } from "../src/config.js";
@@ -52,23 +57,173 @@ function confirmed() {
     new Date("2026-11-17T00:00:00Z"),
   );
 }
-test("precarga 2026 es propuesta revisable, nunca confirma ni inventa 2027", () => {
+test("precarga distingue fuente oficial y base legal para cualquier año futuro sin confirmarlos", () => {
   const calendar = initialCalendar();
-  assert.equal(calendar.years[2026].confirmedAt, null);
-  assert.equal(calendar.years[2026].entries.length, 0);
-  assert.ok(calendar.years[2026].proposal!.entries.length >= 16);
-  assert.equal(calendar.years[2027], undefined);
+  const saved = JSON.stringify(calendar);
+  for (const year of [2026, 2027, 2035, 2101, 2200]) {
+    const state = holidayYearDto(calendar, year);
+    assert.equal(state.confirmedAt, null);
+    assert.deepEqual(state.entries, []);
+    assert.ok(state.proposal!.entries.length >= 10);
+    assert.equal(
+      state.proposal!.kind,
+      year === 2026 ? "official" : "statutory",
+    );
+    assert.ok(
+      state.proposal!.entries.every((entry) =>
+        entry.date.startsWith(`${year}-`),
+      ),
+    );
+  }
+  assert.equal(JSON.stringify(calendar), saved);
   assert.equal(
     holidayCalendarStatus(calendar, new Date("2026-11-17T12:00:00Z"))
       .needsConfirmation,
     true,
   );
   assert.equal(holidayYearDto(calendar, 2027).version, 0);
-  assert.equal(calendar.years[2027], undefined);
   assert.deepEqual(parseCalendar(null), calendar);
   assert.throws(() => parseCalendar("{}"), {
     code: "HOLIDAY_CALENDAR_INVALID",
   });
+});
+
+test("JSON anterior se hidrata una sola vez, conserva calendarios confirmados y recupera años vacíos por fallos", () => {
+  const existing = confirmed();
+  const { annualSourceStatus: _status2026, ...legacy2026 } =
+    existing.years[2026];
+  const { annualSourceStatus: _status2027, ...legacy2027 } = {
+    ...emptyHolidayYear(2027),
+    version: 4,
+    lastCheckedAt: "2026-11-17T12:00:00.000Z",
+    lastCheckError:
+      "No se pudo consultar un calendario oficial completo para este año.",
+  };
+  const previous = {
+    schemaVersion: 1,
+    years: { "2026": legacy2026, "2027": legacy2027 },
+    lastSyncDay: "2026-11-17",
+  };
+  const serialized = JSON.stringify(previous);
+  const hydrated = parseCalendar(serialized);
+  assert.deepEqual(hydrated.years[2026].entries, existing.years[2026].entries);
+  assert.equal(
+    hydrated.years[2026].confirmedAt,
+    existing.years[2026].confirmedAt,
+  );
+  assert.equal(hydrated.years[2026].proposal, null);
+  assert.equal(hydrated.years[2026].version, existing.years[2026].version);
+  assert.equal(hydrated.years[2026].revision, existing.years[2026].revision);
+  assert.equal(hydrated.years[2027].version, 4);
+  assert.equal(hydrated.years[2027].revision, 0);
+  assert.equal(hydrated.years[2027].confirmedAt, null);
+  assert.deepEqual(hydrated.years[2027].entries, []);
+  assert.equal(hydrated.years[2027].proposal!.kind, "statutory");
+  assert.equal(holidayYearDto(hydrated, 2200).proposal!.kind, "statutory");
+  assert.equal(hydrated.lastSyncDay, "2026-11-17");
+  assert.deepEqual(parseCalendar(JSON.stringify(hydrated)), hydrated);
+  assert.equal(JSON.stringify(previous), serialized);
+});
+
+test("hidratar conserva manuales y no resucita una propuesta consumida ni reemplaza una oficial existente", () => {
+  const initial = initialCalendar(),
+    proposal = initial.years[2027].proposal!;
+  const manual: HolidayEntry = {
+    date: "2027-07-22",
+    name: "Día propio",
+    source: "manual",
+    enabled: true,
+  };
+  const draft = {
+    ...initial,
+    years: {
+      "2027": { ...emptyHolidayYear(2027), version: 2, entries: [manual] },
+    },
+  };
+  const hydrated = parseCalendar(JSON.stringify(draft));
+  assert.deepEqual(hydrated.years[2027].entries, [manual]);
+  assert.ok(
+    hydrated.years[2027].proposal!.entries.some(
+      (entry) => entry.date === manual.date && entry.source === "manual",
+    ),
+  );
+  assert.equal(hydrated.years[2027].version, 2);
+  const consumed = updateHolidayYear(initial, 2027, {
+    version: 0,
+    entries: proposal.entries,
+    confirm: false,
+    proposalHash: proposal.hash,
+  });
+  assert.equal(consumed.years[2027].confirmedAt, null);
+  assert.equal(
+    parseCalendar(JSON.stringify(consumed)).years[2027].proposal,
+    null,
+  );
+  const official = applyOfficialCheck(initial, 2027, [
+    ...proposal.sourceEntries,
+    manual,
+  ]);
+  const { kind: _kind, ...legacyProposal } = official.years[2027].proposal!;
+  const legacyOfficial = {
+    ...official,
+    years: {
+      ...official.years,
+      "2027": { ...official.years[2027], proposal: legacyProposal },
+    },
+  };
+  const parsed = parseCalendar(JSON.stringify(legacyOfficial));
+  assert.equal(holidayYearDto(parsed, 2027).proposal!.kind, "official");
+  assert.equal(
+    parsed.years[2027].proposal!.hash,
+    official.years[2027].proposal!.hash,
+  );
+  assert.deepEqual(
+    parsed.years[2027].proposal!.entries,
+    official.years[2027].proposal!.entries,
+  );
+});
+
+test("una fuente anual publicada reemplaza la propuesta base y las consultas repetidas no resucitan la confirmada", () => {
+  const initial = initialCalendar(),
+    base = initial.years[2027].proposal!;
+  const available = applyOfficialCheck(initial, 2027, base.sourceEntries);
+  assert.equal(available.years[2027].proposal!.kind, "official");
+  assert.equal(available.years[2027].annualSourceStatus, "available");
+  assert.equal(available.years[2027].confirmedAt, null);
+  assert.deepEqual(available.years[2027].entries, []);
+  const official = available.years[2027].proposal!;
+  const accepted = updateHolidayYear(available, 2027, {
+    version: available.years[2027].version,
+    entries: official.entries,
+    confirm: true,
+    proposalHash: official.hash,
+  });
+  const again = applyOfficialCheck(accepted, 2027, official.sourceEntries);
+  assert.equal(again.years[2027].proposal, null);
+  assert.equal(again.years[2027].confirmedAt, accepted.years[2027].confirmedAt);
+  assert.equal(again.years[2027].revision, accepted.years[2027].revision);
+  assert.deepEqual(again.years[2027].entries, accepted.years[2027].entries);
+  const notPublished = applyOfficialCheck(
+    again,
+    2027,
+    null,
+    new Date("2026-11-18T12:00:00Z"),
+    "not_published",
+  );
+  assert.equal(notPublished.years[2027].annualSourceStatus, "not_published");
+  assert.equal(notPublished.years[2027].proposal, null);
+  assert.equal(
+    notPublished.years[2027].confirmedAt,
+    accepted.years[2027].confirmedAt,
+  );
+  assert.equal(
+    notPublished.years[2027].revision,
+    accepted.years[2027].revision,
+  );
+  assert.deepEqual(
+    notPublished.years[2027].entries,
+    accepted.years[2027].entries,
+  );
 });
 test("confirmación consume propuesta, conserva cobertura y controla versión y hash", () => {
   const calendar = confirmed(),
@@ -143,7 +298,7 @@ test("consulta oficial crea propuesta, no altera activo, token o km guardados", 
   const failed = applyOfficialCheck(next, 2026, null);
   assert.deepEqual(failed.years[2026].proposal, next.years[2026].proposal);
   assert.deepEqual(failed.years[2026].entries, next.years[2026].entries);
-  assert.ok(failed.years[2026].lastCheckError);
+  assert.equal(failed.years[2026].annualSourceStatus, "unavailable");
 });
 test("parser oficial excluye no laborables, turísticos y locales sin convertir fechas a UTC", () => {
   const payload = source();
@@ -199,6 +354,7 @@ test("descarga oficial valida timeout, redirecciones, tamaño y formato sin red 
       2026,
       (async () => new Response("missing", { status: 404 })) as typeof fetch,
     ),
+    HolidaySourceNotPublishedError,
   );
   await assert.rejects(
     downloadOfficialCalendar(
@@ -337,10 +493,16 @@ test(
             (await adminAgent.get("/api/holiday-calendar/2026")).status,
             200,
           );
-          assert.equal(
-            (await adminAgent.get("/api/holiday-calendar/2027")).status,
-            200,
-          );
+          for (const year of [2027, 2035, 2101, 2200]) {
+            const future = await adminAgent.get(
+              `/api/holiday-calendar/${year}`,
+            );
+            assert.equal(future.status, 200, JSON.stringify(future.body));
+            assert.equal(future.body.proposal.kind, "statutory");
+            assert.ok(future.body.proposal.entries.length >= 10);
+            assert.deepEqual(future.body.entries, []);
+            assert.equal(future.body.confirmedAt, null);
+          }
           assert.equal(
             (await adminAgent.get("/api/holiday-calendar/status")).status,
             200,
@@ -381,7 +543,61 @@ test(
         },
       );
       await t.test(
-        "fuente fallida conserva activo y reporta error administrativo",
+        "GET hidrata un JSON ya guardado con año futuro vacío sin escribir ni alterar el confirmado",
+        async () => {
+          const before = await db.setting.findUniqueOrThrow({
+            where: { id: "main" },
+          });
+          const saved = await getCalendar();
+          const { annualSourceStatus: _status, ...oldEmpty } = {
+            ...emptyHolidayYear(2027),
+            version: 6,
+            lastCheckedAt: "2026-11-17T12:00:00.000Z",
+            lastCheckError: "Fallo anterior de la fuente",
+          };
+          const legacy = JSON.stringify({
+            schemaVersion: 1,
+            years: { "2026": saved.years[2026], "2027": oldEmpty },
+            lastSyncDay: null,
+          });
+          try {
+            await db.setting.update({
+              where: { id: "main" },
+              data: { holidayCalendar: legacy },
+            });
+            const response = await adminAgent.get("/api/holiday-calendar/2027");
+            assert.equal(response.status, 200, JSON.stringify(response.body));
+            assert.equal(response.body.proposal.kind, "statutory");
+            assert.equal(response.body.version, 6);
+            assert.equal(response.body.revision, 0);
+            assert.equal(response.body.confirmedAt, null);
+            const current = await adminAgent.get("/api/holiday-calendar/2026");
+            assert.deepEqual(current.body.entries, saved.years[2026].entries);
+            assert.equal(
+              current.body.confirmedAt,
+              saved.years[2026].confirmedAt,
+            );
+            assert.equal(current.body.proposal, null);
+            assert.equal(
+              (await adminAgent.get("/api/holiday-calendar/2200")).body.proposal
+                .kind,
+              "statutory",
+            );
+            assert.equal(
+              (await db.setting.findUniqueOrThrow({ where: { id: "main" } }))
+                .holidayCalendar,
+              legacy,
+            );
+          } finally {
+            await db.setting.update({
+              where: { id: "main" },
+              data: { holidayCalendar: before.holidayCalendar },
+            });
+          }
+        },
+      );
+      await t.test(
+        "404 devuelve la precarga disponible sin error y conserva un calendario confirmado",
         async () => {
           const before = await getCalendar();
           const mock = t.mock.method(
@@ -394,9 +610,31 @@ test(
               adminAgent,
               "/holiday-calendar/2026/check",
             );
-            assert.equal(response.status, 502);
+            assert.equal(response.status, 200, JSON.stringify(response.body));
+            assert.equal(response.body.annualSourceStatus, "not_published");
+            assert.equal(response.body.proposal, null);
             assert.equal(
-              response.body.error.code,
+              response.body.confirmedAt,
+              before.years[2026].confirmedAt,
+            );
+            for (const year of [2027, 2031, 2200]) {
+              const future = await post(
+                adminAgent,
+                `/holiday-calendar/${year}/check`,
+              );
+              assert.equal(future.status, 200, JSON.stringify(future.body));
+              assert.equal(future.body.annualSourceStatus, "not_published");
+              assert.equal(future.body.proposal.kind, "statutory");
+              assert.ok(future.body.proposal.entries.length >= 10);
+              assert.equal(future.body.confirmedAt, null);
+            }
+            const noContent = await post(
+              adminAgent,
+              "/holiday-calendar/2025/check",
+            );
+            assert.equal(noContent.status, 502);
+            assert.equal(
+              noContent.body.error.code,
               "HOLIDAY_SOURCE_UNAVAILABLE",
             );
           } finally {
@@ -408,7 +646,70 @@ test(
             before.years[2026].entries,
           );
           assert.equal(after.years[2026].revision, before.years[2026].revision);
-          assert.ok(after.years[2026].lastCheckError);
+          assert.equal(
+            after.years[2026].confirmedAt,
+            before.years[2026].confirmedAt,
+          );
+          assert.equal(after.years[2026].proposal, null);
+          assert.equal(after.years[2026].annualSourceStatus, "not_published");
+        },
+      );
+      await t.test(
+        "fallo de red conserva propuesta y permite luego incorporar la fuente anual oficial",
+        async () => {
+          const before = await adminAgent.get("/api/holiday-calendar/2027");
+          const failedFetch = t.mock.method(globalThis, "fetch", async () => {
+            throw new TypeError("Failed to fetch");
+          });
+          try {
+            const response = await post(
+              adminAgent,
+              "/holiday-calendar/2027/check",
+            );
+            assert.equal(response.status, 200, JSON.stringify(response.body));
+            assert.equal(response.body.annualSourceStatus, "unavailable");
+            assert.deepEqual(response.body.proposal, before.body.proposal);
+            assert.deepEqual(response.body.entries, before.body.entries);
+            assert.equal(response.body.revision, before.body.revision);
+          } finally {
+            failedFetch.mock.restore();
+          }
+          const availableFetch = t.mock.method(globalThis, "fetch", async () =>
+            Response.json(source(2027)),
+          );
+          try {
+            const response = await post(
+              adminAgent,
+              "/holiday-calendar/2027/check",
+            );
+            assert.equal(response.status, 200, JSON.stringify(response.body));
+            assert.equal(response.body.annualSourceStatus, "available");
+            assert.equal(response.body.proposal.kind, "official");
+            assert.equal(response.body.confirmedAt, null);
+            assert.deepEqual(response.body.entries, []);
+            const accepted = await adminAgent
+              .put("/api/holiday-calendar/2027")
+              .set("Origin", origin)
+              .set("X-Tomasini-Request", "1")
+              .send({
+                version: response.body.version,
+                entries: response.body.proposal.entries,
+                confirm: true,
+                proposalHash: response.body.proposal.hash,
+              });
+            assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+            const repeated = await post(
+              adminAgent,
+              "/holiday-calendar/2027/check",
+            );
+            assert.equal(repeated.status, 200, JSON.stringify(repeated.body));
+            assert.equal(repeated.body.proposal, null);
+            assert.equal(repeated.body.confirmedAt, accepted.body.confirmedAt);
+            assert.equal(repeated.body.revision, accepted.body.revision);
+            assert.deepEqual(repeated.body.entries, accepted.body.entries);
+          } finally {
+            availableFetch.mock.restore();
+          }
         },
       );
       await t.test(
@@ -447,8 +748,16 @@ test(
             before.years[2026].entries,
           );
           assert.ok(after.years[2026].proposal);
-          assert.equal(after.years[2027].confirmedAt, null);
-          assert.ok(after.years[2027].lastCheckError);
+          assert.equal(
+            after.years[2027].confirmedAt,
+            before.years[2027].confirmedAt,
+          );
+          assert.equal(after.years[2027].proposal, null);
+          assert.equal(after.years[2027].annualSourceStatus, "not_published");
+          assert.deepEqual(
+            after.years[2027].entries,
+            before.years[2027].entries,
+          );
           assert.equal((await runHolidayCalendarSync(now, fetcher)).checked, 0);
           assert.equal(calls, 2);
         },
