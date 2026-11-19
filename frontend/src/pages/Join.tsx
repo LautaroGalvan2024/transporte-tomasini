@@ -11,19 +11,13 @@ import { ApiError, send } from "../api";
 import { Field, Loading, PasswordField } from "../ui";
 import type { User } from "../types";
 
-type Preview = {
-  role: "ADMIN" | "DRIVER";
-  name: string | null;
-  driverName: string | null;
-  expiresAt: string;
-  replacesExistingAccess: boolean;
-};
-type Acceptance = {
-  token: string;
-  name: string;
-  username: string;
-  password: string;
-};
+import {
+  invitationAttempt,
+  invitationAttemptIsUncertain,
+  type InvitationAcceptance,
+  type InvitationPreview,
+} from "../features/invitations/invitation-attempt";
+
 export function JoinPage({
   onLogin,
   currentUser,
@@ -34,7 +28,7 @@ export function JoinPage({
   onSignout: () => Promise<void>;
 }) {
   const [token] = useState(() => location.hash.slice(1));
-  const [preview, setPreview] = useState<Preview | null>(null),
+  const [preview, setPreview] = useState<InvitationPreview | null>(null),
     [loading, setLoading] = useState(true),
     [failure, setFailure] = useState(""),
     [revision, setRevision] = useState(0);
@@ -48,7 +42,7 @@ export function JoinPage({
     [error, setError] = useState(""),
     [fields, setFields] = useState<Record<string, string>>({}),
     [uncertain, setUncertain] = useState(false);
-  const pendingAttempt = useRef<Acceptance | null>(null),
+  const pendingAttempt = useRef<InvitationAcceptance | null>(null),
     submitting = useRef(false),
     mounted = useRef(true);
   useEffect(() => {
@@ -68,7 +62,7 @@ export function JoinPage({
       setLoading(false);
       return;
     }
-    send<Preview>("/invitations/preview", "POST", { token })
+    send<InvitationPreview>("/invitations/preview", "POST", { token })
       .then((p) => {
         if (alive) {
           setPreview(p);
@@ -111,12 +105,12 @@ export function JoinPage({
       setFields({ repeat: "Las contraseñas no coinciden." });
       return;
     }
-    const payload = pendingAttempt.current ?? {
+    const payload = invitationAttempt(pendingAttempt.current, {
       token,
-      name: name.trim(),
-      username: username.trim(),
+      name,
+      username,
       password,
-    };
+    });
     pendingAttempt.current = payload;
     submitting.current = true;
     setBusy(true);
@@ -132,11 +126,7 @@ export function JoinPage({
     } catch (e) {
       if (!mounted.current) return;
       const err = e as ApiError;
-      const ambiguous =
-        err.status === 0 ||
-        err.status >= 500 ||
-        err.code === "INVITATION_UNAVAILABLE" ||
-        (uncertain && !["USERNAME_TAKEN", "VALIDATION"].includes(err.code));
+      const ambiguous = invitationAttemptIsUncertain(err, uncertain);
       setError(err.message);
       setFields(err.fields || {});
       setUncertain(ambiguous);

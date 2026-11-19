@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import "./frontend-version.css";
 
 const storageKey = "tomasini.frontend.version";
 const pollInterval = 60_000;

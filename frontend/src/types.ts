@@ -1,3 +1,4 @@
+import type { Destination } from "./app/destinations";
 export type Role = "ADMIN" | "DRIVER";
 export interface User {
   id: string;
@@ -162,7 +163,7 @@ export interface Notification {
 }
 export type PageProps = {
   user: User;
-  onNavigate: (page: string) => void;
+  onNavigate: (page: Destination) => void;
   onNotify: (message: string, kind?: "success" | "error") => void;
 };
 export interface Invitation {

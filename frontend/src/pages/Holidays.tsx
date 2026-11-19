@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   Check,
@@ -29,100 +23,19 @@ import {
 import {
   HOLIDAY_CALENDAR_CHANGED,
   currentHolidayYear,
-  selectHolidayBanner,
-  type HolidayCalendarStatus,
-  type HolidayEntry,
   type HolidayYear,
 } from "../holiday-types";
-import "../holiday-calendar.css";
-
-const messageOf = (error: unknown) =>
-  error instanceof Error ? error.message : "No pudimos completar la acción.";
-const sorted = (entries: HolidayEntry[]) =>
-  [...entries].sort((a, b) => a.date.localeCompare(b.date));
-const entriesKey = (entries: HolidayEntry[]) => JSON.stringify(sorted(entries));
-
-export function HolidayCalendarBanner({
-  onReview,
-}: {
-  onReview: (year: number) => void;
-}) {
-  const [status, setStatus] = useState<HolidayCalendarStatus | null>(null);
-  const [error, setError] = useState("");
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const refresh = () => setRevision((value) => value + 1);
-    const refreshVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    const timer = window.setInterval(refreshVisible, 60_000);
-    window.addEventListener("focus", refresh);
-    window.addEventListener(HOLIDAY_CALENDAR_CHANGED, refresh);
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener(HOLIDAY_CALENDAR_CHANGED, refresh);
-      document.removeEventListener("visibilitychange", refreshVisible);
-    };
-  }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    let current = true;
-    api<HolidayCalendarStatus>("/holiday-calendar/status", {
-      signal: controller.signal,
-    })
-      .then((value) => {
-        if (!current) return;
-        setStatus(value);
-        setError("");
-      })
-      .catch((error) => {
-        if (current) setError(messageOf(error));
-      });
-    return () => {
-      current = false;
-      controller.abort();
-    };
-  }, [revision]);
-  const notice = status ? selectHolidayBanner(status) : null;
-  const year = notice?.year ?? null;
-  if (year === null && !error) return null;
-  if (!status && !error) return null;
-  return (
-    <aside
-      className={`holiday-banner ${status?.needsConfirmation ? "is-pending" : ""}`}
-      aria-label="Calendario de feriados"
-    >
-      <CalendarDays size={23} aria-hidden="true" />
-      <div className="holiday-banner-copy">
-        <strong>
-          {notice?.kind === "unconfirmed"
-            ? `Falta confirmar los feriados de ${year}`
-            : notice?.kind === "proposal"
-              ? `Hay novedades en los feriados de ${year}`
-              : "No pudimos comprobar el calendario de feriados"}
-        </strong>
-        <p>
-          {notice?.kind === "unconfirmed"
-            ? "Los viajes pueden cargarse, pero los pendientes de calendario necesitan esta confirmación para su revisión."
-            : notice?.kind === "proposal"
-              ? "Revisá la propuesta nacional antes de incorporarla al cálculo de km al 100%."
-              : error}
-        </p>
-        {error && notice && (
-          <small role="status">No pudimos actualizar este aviso. {error}</small>
-        )}
-      </div>
-      <button
-        className="button secondary"
-        onClick={() => onReview(year ?? currentHolidayYear())}
-      >
-        Revisar feriados <ChevronRight size={17} aria-hidden="true" />
-      </button>
-    </aside>
-  );
-}
+import {
+  applyHolidayEntry,
+  sortHolidayEntries as sorted,
+  toggleHolidayEntry,
+  type HolidayDiscardAction,
+  type HolidayEditing,
+} from "../features/holidays/draft";
+import { useHolidayDraft } from "../features/holidays/useHolidayDraft";
+import { HolidayEditor } from "../features/holidays/HolidayEditor";
+import { holidayMessageOf as messageOf } from "../features/holidays/messages";
+export { HolidayCalendarBanner } from "../features/holidays/HolidayCalendarBanner";
 
 export function HolidaysPanel({
   initialYear,
@@ -136,28 +49,23 @@ export function HolidaysPanel({
   const [year, setYear] = useState(initialYear ?? currentHolidayYear);
   const [yearInput, setYearInput] = useState(String(year));
   const [data, setData] = useState<HolidayYear | null>(null);
-  const [entries, setEntries] = useState<HolidayEntry[]>([]);
-  const [proposalHash, setProposalHash] = useState<string | null>(null);
+  const {
+    entries,
+    setEntries,
+    proposalHash,
+    setProposalHash,
+    dirty,
+    adoptDraft,
+  } = useHolidayDraft(data !== null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"save" | "check" | null>(null);
   const [sourceError, setSourceError] = useState("");
   const [loadRevision, setLoadRevision] = useState(0);
-  const [editing, setEditing] = useState<number | "new" | null>(null);
+  const [editing, setEditing] = useState<HolidayEditing | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [discardAction, setDiscardAction] = useState<{
-    year?: number;
-    reload?: boolean;
-    proposal?: boolean;
-  } | null>(null);
-  const draftBaseline = useRef({
-    entries: entriesKey([]),
-    proposalHash: null as string | null,
-  });
-  const dirty =
-    !!data &&
-    (entriesKey(entries) !== draftBaseline.current.entries ||
-      proposalHash !== draftBaseline.current.proposalHash);
+  const [discardAction, setDiscardAction] =
+    useState<HolidayDiscardAction | null>(null);
   const dirtyCallback = useRef(onDirtyChange);
   dirtyCallback.current = onDirtyChange;
 
@@ -178,21 +86,15 @@ export function HolidaysPanel({
     }
   }, [initialYear]);
 
-  const adopt = useCallback((value: HolidayYear) => {
-    const initialProposal =
-      !value.confirmedAt && value.entries.length === 0 ? value.proposal : null;
-    const nextEntries = sorted(initialProposal?.entries ?? value.entries);
-    const nextProposalHash = initialProposal?.hash ?? null;
-    draftBaseline.current = {
-      entries: entriesKey(nextEntries),
-      proposalHash: nextProposalHash,
-    };
-    setData(value);
-    setEntries(nextEntries);
-    setProposalHash(nextProposalHash);
-    setError("");
-    setSourceError("");
-  }, []);
+  const adopt = useCallback(
+    (value: HolidayYear) => {
+      adoptDraft(value);
+      setData(value);
+      setError("");
+      setSourceError("");
+    },
+    [adoptDraft],
+  );
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
@@ -229,7 +131,7 @@ export function HolidaysPanel({
       return;
     }
     if (dirty) {
-      setDiscardAction({ year: next });
+      setDiscardAction({ kind: "year", year: next });
       return;
     }
     setYear(next);
@@ -484,7 +386,7 @@ export function HolidaysPanel({
                   disabled={!!busy || !!proposalHash}
                   onClick={() =>
                     dirty
-                      ? setDiscardAction({ proposal: true })
+                      ? setDiscardAction({ kind: "proposal" })
                       : loadProposal()
                   }
                 >
@@ -517,7 +419,7 @@ export function HolidaysPanel({
                 disabled={!!busy}
                 onClick={() =>
                   dirty
-                    ? setDiscardAction({ reload: true })
+                    ? setDiscardAction({ kind: "reload" })
                     : setLoadRevision((value) => value + 1)
                 }
               >
@@ -543,7 +445,7 @@ export function HolidaysPanel({
                 type="button"
                 className="button secondary"
                 disabled={!!busy}
-                onClick={() => setEditing("new")}
+                onClick={() => setEditing({ kind: "new" })}
               >
                 <Plus size={17} aria-hidden="true" />
                 Agregar día especial
@@ -570,7 +472,7 @@ export function HolidaysPanel({
                   <span>Estado</span>
                   <span>Acciones</span>
                 </div>
-                {entries.map((entry, index) => (
+                {entries.map((entry) => (
                   <article
                     key={`${entry.date}-${entry.source}`}
                     className={`holiday-row ${!entry.enabled ? "is-disabled" : ""}`}
@@ -597,7 +499,12 @@ export function HolidaysPanel({
                         type="button"
                         className="button ghost"
                         disabled={!!busy}
-                        onClick={() => setEditing(index)}
+                        onClick={() =>
+                          setEditing({
+                            kind: "existing",
+                            originalDate: entry.date,
+                          })
+                        }
                         aria-label={`Editar ${entry.name}, ${formatDate(entry.date)}`}
                       >
                         <Pencil size={16} aria-hidden="true" />
@@ -609,11 +516,7 @@ export function HolidaysPanel({
                         disabled={!!busy}
                         onClick={() =>
                           setEntries((current) =>
-                            current.map((value, i) =>
-                              i === index
-                                ? { ...value, enabled: !value.enabled }
-                                : value,
-                            ),
+                            toggleHolidayEntry(current, entry.date),
                           )
                         }
                         aria-label={`${entry.enabled ? "Desactivar" : "Activar"} ${entry.name}, ${formatDate(entry.date)}`}
@@ -644,7 +547,7 @@ export function HolidaysPanel({
                   type="button"
                   className="button ghost"
                   disabled={!!busy}
-                  onClick={() => setDiscardAction({ reload: true })}
+                  onClick={() => setDiscardAction({ kind: "reload" })}
                 >
                   Descartar cambios
                 </button>
@@ -679,19 +582,16 @@ export function HolidaysPanel({
       {editing !== null && (
         <HolidayEditor
           year={year}
-          entry={editing === "new" ? null : entries[editing]}
+          entry={
+            editing.kind === "new"
+              ? null
+              : (entries.find((entry) => entry.date === editing.originalDate) ??
+                null)
+          }
           entries={entries}
           onClose={() => setEditing(null)}
           onSave={(value) => {
-            setEntries((current) =>
-              sorted(
-                editing === "new"
-                  ? [...current, value]
-                  : current.map((entry, index) =>
-                      index === editing ? value : entry,
-                    ),
-              ),
-            );
+            setEntries((current) => applyHolidayEntry(current, editing, value));
             setEditing(null);
             setError("");
           }}
@@ -758,7 +658,7 @@ export function HolidaysPanel({
         >
           <div className="holiday-confirm">
             <p>
-              {discardAction.proposal
+              {discardAction.kind === "proposal"
                 ? "Al cargar la propuesta se reemplazará el borrador de esta pantalla. Los cambios guardados ya están incluidos en la propuesta."
                 : "Si continuás, se perderán los cambios que todavía no guardaste en este calendario."}
             </p>
@@ -779,10 +679,10 @@ export function HolidaysPanel({
                 onClick={() => {
                   const action = discardAction;
                   setDiscardAction(null);
-                  if (action.year !== undefined) {
+                  if (action.kind === "year") {
                     setYear(action.year);
                     setYearInput(String(action.year));
-                  } else if (action.proposal) loadProposal();
+                  } else if (action.kind === "proposal") loadProposal();
                   else setLoadRevision((value) => value + 1);
                 }}
               >
@@ -793,106 +693,5 @@ export function HolidaysPanel({
         </Modal>
       )}
     </section>
-  );
-}
-
-function HolidayEditor({
-  year,
-  entry,
-  entries,
-  onClose,
-  onSave,
-}: {
-  year: number;
-  entry: HolidayEntry | null;
-  entries: HolidayEntry[];
-  onClose: () => void;
-  onSave: (entry: HolidayEntry) => void;
-}) {
-  const [date, setDate] = useState(entry?.date ?? "");
-  const [name, setName] = useState(entry?.name ?? "");
-  const [enabled, setEnabled] = useState(entry?.enabled ?? true);
-  const [error, setError] = useState("");
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (
-      !date.startsWith(`${year}-`) ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-      !name.trim()
-    ) {
-      setError("Ingresá una fecha del año seleccionado y un motivo.");
-      return;
-    }
-    if (entries.some((value) => value !== entry && value.date === date)) {
-      setError(
-        "Esta fecha ya está cargada. Editá el día existente para evitar duplicados.",
-      );
-      return;
-    }
-    onSave({
-      date,
-      name: name.trim(),
-      enabled,
-      source: entry?.source ?? "manual",
-    });
-  }
-  return (
-    <Modal
-      title={entry ? "Editar día al 100%" : "Agregar día especial"}
-      onClose={onClose}
-    >
-      <form className="admin-form holiday-editor" onSubmit={submit}>
-        <p>
-          Aplica el día completo, de 00:00 a 00:00 del día siguiente, para todos
-          los choferes.
-        </p>
-        <Field label="Fecha">
-          <input
-            type="date"
-            required
-            min={`${year}-01-01`}
-            max={`${year}-12-31`}
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-          />
-        </Field>
-        <Field label="Motivo">
-          <input
-            required
-            maxLength={180}
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Ej. Día del Camionero"
-          />
-        </Field>
-        <label className="holiday-enabled-check">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(event) => setEnabled(event.target.checked)}
-          />
-          <span>Habilitado para km al 100%</span>
-        </label>
-        {entry?.source === "official" && (
-          <p className="holiday-hint">
-            Origen: calendario nacional. Los ajustes guardados se conservarán al
-            revisar futuras propuestas.
-          </p>
-        )}
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="holiday-modal-actions">
-          <button type="button" className="button secondary" onClick={onClose}>
-            Cancelar
-          </button>
-          <button type="submit" className="button primary">
-            {entry ? "Aplicar al borrador" : "Agregar al borrador"}
-          </button>
-        </div>
-      </form>
-    </Modal>
   );
 }
