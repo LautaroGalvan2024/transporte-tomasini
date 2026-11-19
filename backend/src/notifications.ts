@@ -9,7 +9,7 @@ import { getConfig, smtpConfigured } from "./config.js";
 
 type Sender = (message: SendMailOptions) => Promise<unknown>;
 const MAX_ATTEMPTS = 5;
-function sender(): Sender {
+export function createNotificationSender() {
   const port = z.coerce
     .number()
     .int()
@@ -32,7 +32,7 @@ function sender(): Sender {
     socketTimeout: 30_000,
     tls: { minVersion: "TLSv1.2", rejectUnauthorized: true },
   });
-  return async (message) => {
+  return async (message: SendMailOptions) => {
     try {
       return await transport.sendMail(message);
     } finally {
@@ -169,7 +169,7 @@ export async function runNotificationJob(
     return { sent: 0, pending: 1, reason: "WAITING_OR_CLAIMED" };
   const attempt = job.attempts + 1;
   try {
-    const send = options.send ?? sender();
+    const send = options.send ?? createNotificationSender();
     await send({
       from: process.env.SMTP_FROM ?? "tomasini@example.invalid",
       to: settings.recipientEmail,
