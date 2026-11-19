@@ -3,6 +3,7 @@ import type { SendMailOptions } from "nodemailer";
 import { z } from "zod";
 import { getDb } from "./db.js";
 import { businessDay, businessHour } from "./domain.js";
+import { renderNotificationEmail } from "./notification-email.js";
 import { obligationDtos, auditJson } from "./models.js";
 import { getConfig, smtpConfigured } from "./config.js";
 
@@ -167,31 +168,13 @@ export async function runNotificationJob(
   if (!claimed.count)
     return { sent: 0, pending: 1, reason: "WAITING_OR_CLAIMED" };
   const attempt = job.attempts + 1;
-  const lines = alerts.map((o) => {
-    const target = o.trailer
-      ? `Acoplado ${o.trailer.plate}`
-      : (o.truck?.plate ?? o.driver?.name ?? "Sin asignar");
-    const deadline = [
-      o.dueDate ? `fecha ${o.dueDate}` : "",
-      o.dueKm !== null ? `${o.dueKm.toLocaleString("es-AR")} km` : "",
-    ]
-      .filter(Boolean)
-      .join(" o ");
-    const reading =
-      o.truck && o.dueKm !== null
-        ? o.truck.odometer !== null && o.truck.odometerAt !== null
-          ? ` Última lectura: ${o.truck.odometer.toLocaleString("es-AR")} km (${businessDay(new Date(o.truck.odometerAt))}).`
-          : " Kilometraje sin informar. No se pudo evaluar el vencimiento por kilómetros."
-        : "";
-    return `- ${o.status === "OVERDUE" ? "VENCIDO" : "POR VENCER"}: ${o.title} · ${target} · ${deadline}.${reading}`;
-  });
   try {
     const send = options.send ?? sender();
     await send({
       from: process.env.SMTP_FROM ?? "tomasini@example.invalid",
       to: settings.recipientEmail,
       subject: `Transporte Tomasini · Vencimientos ${today}`,
-      text: `Resumen de vencimientos de Transporte Tomasini\n\n${lines.join("\n")}\n\nAbrir el sistema: ${getConfig().origin}\n\nLos avisos por kilómetros dependen de las lecturas registradas.`,
+      ...renderNotificationEmail(alerts, today, getConfig().origin),
       messageId: `<tomasini-${job.id}@${new URL(getConfig().origin).hostname}>`,
       headers: { "X-Tomasini-Notification": job.id },
     });

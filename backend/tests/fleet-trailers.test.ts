@@ -1040,16 +1040,21 @@ test(
             where: { id: "main" },
             data: { recipientEmail: recipient },
           });
-          let message = "";
+          let message = "",
+            html = "";
           const sent = await runNotificationJob({
             now,
             configured: true,
             send: async (mail) => {
               message = String(mail.text);
+              html = String(mail.html);
             },
           });
           assert.equal(sent.sent, 1);
           assert.match(message, new RegExp(trailer.plate));
+          assert.match(html, new RegExp(`Acoplado ${trailer.plate}`));
+          assert.match(html, /Kilometraje sin informar/);
+          assert.doesNotMatch(html, new RegExp(`Solo km ${suffix}`));
           assert.match(message, new RegExp(`Fecha y km ${suffix}`));
           assert.match(
             message,
