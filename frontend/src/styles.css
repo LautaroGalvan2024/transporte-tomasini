@@ -2897,14 +2897,14 @@ strong {
 .odometer-reference small,
 .recent-routes > span,
 .trip-save-bar > span {
-  color: #66798b;
+  color: var(--muted);
 }
 .profile-button strong {
   font-size: 13px;
 }
 .profile-button small,
 .logout-button {
-  color: #66798b;
+  color: var(--muted);
 }
 .desktop-breadcrumb,
 .today-label {
