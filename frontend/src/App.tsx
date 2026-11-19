@@ -218,7 +218,6 @@ export function App() {
       >
         <Icon size={mobile ? 23 : 20} aria-hidden="true" />
         <span>{label}</span>
-        {!mobile && active && <span className="nav-dot" />}
       </button>
     );
   }

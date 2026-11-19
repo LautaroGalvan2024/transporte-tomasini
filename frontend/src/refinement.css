@@ -4,7 +4,6 @@
   --radius: 12px;
   --shadow: none;
   --muted: #647488;
-  --panel-shadow: 0 2px 6px #19365008;
 }
 .official-brand {
   display: block;
@@ -88,24 +87,8 @@
 .workspace-heading h1,
 .admin-page-heading h1 {
   color: var(--navy-dark);
+  font-weight: 650;
   text-wrap: balance;
-}
-.workspace-heading h1::before,
-.admin-page-heading h1::before {
-  content: "";
-  display: inline-block;
-  vertical-align: 0.03em;
-  width: 7px;
-  height: 0.65em;
-  border-inline: 2px solid #8ba5b9;
-  transform: skewX(-16deg);
-  margin-inline: 3px 11px;
-}
-.main-area :is(.admin-surface, .panel, .compact-trip-form, .account-layout) {
-  box-shadow: var(--panel-shadow);
-}
-.main-area .account-layout > .panel {
-  box-shadow: none;
 }
 .form-tabs {
   display: flex;
@@ -188,15 +171,9 @@
   display: none;
 }
 .trip-core h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   color: var(--navy-dark);
   font-size: 17px;
   margin: 0 0 16px;
-}
-.trip-core h2 > svg {
-  color: var(--blue);
 }
 .trip-core {
   padding: 22px 0;
@@ -268,8 +245,8 @@
   padding: 10px var(--trip-gutter);
   font-size: 13px;
   color: #536779;
-  background: #f8fafc;
-  border-block: 1px solid var(--line);
+  background: var(--surface);
+  border: 0;
 }
 .trip-list-panel .list-totals strong {
   font-size: 16px;
@@ -278,7 +255,7 @@
 }
 .trip-list-panel .list-totals > span + span {
   padding-inline-start: 16px;
-  border-inline-start: 1px solid #c2cfd9;
+  border-inline-start: 1px solid var(--line);
 }
 .trip-list-panel .data-table {
   font-size: 13px;
@@ -595,15 +572,24 @@
     margin-left: auto;
   }
   .workspace-heading {
-    align-items: flex-start;
+    align-items: center;
     flex-wrap: wrap;
-    gap: 16px;
+    gap: 12px;
   }
   .trip-workspace .workspace-heading {
     align-items: center;
   }
   .trip-workspace .workspace-heading h1 {
     font-size: 25px;
+  }
+  .main-page-home .admin-page-heading {
+    align-items: center;
+    gap: 12px;
+  }
+  .main-page-home :is(.admin-page-heading, .workspace-heading) > .primary {
+    width: auto;
+    min-height: 48px;
+    padding-inline: 16px;
   }
   .compact-trip-form {
     padding: 0 18px;

@@ -3,32 +3,42 @@
   height: auto;
   padding: 20px;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   gap: 0;
   background: var(--surface);
 }
 
 .login-page .login-identity {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
   min-height: calc(100dvh - 40px);
   padding: clamp(36px, 4.2vw, 64px);
-  gap: 48px;
+  gap: 24px;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background-color: #edf2f6;
-  background-image:
-    linear-gradient(130deg, #edf2f6e6 0%, #edf2f6b3 34%, #edf2f600 66%),
-    url("/brand/ruta-tomasini.webp");
+  border: 0;
+  border-radius: 6px;
+  background-color: var(--soft);
+}
+
+.login-page .login-identity::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background-image: url("/brand/ruta-tomasini.webp");
   background-size: cover;
   background-position: center;
+  filter: grayscale(1);
+  opacity: 0.24;
+  pointer-events: none;
 }
 
 .login-page .login-identity .official-brand {
-  width: 154px;
+  width: 132px;
   height: auto;
   max-width: 45%;
   object-fit: contain;
@@ -36,15 +46,14 @@
 }
 
 .login-page .login-identity > p {
-  max-width: 420px;
+  max-width: 300px;
   margin: 0;
-  color: var(--navy-dark);
-  font-size: clamp(40px, 4.2vw, 64px);
+  color: var(--text);
+  font-size: 22px;
   font-weight: 500;
-  line-height: 1.12;
-  letter-spacing: -0.055em;
+  line-height: 1.45;
+  letter-spacing: -0.35px;
   text-align: left;
-  text-wrap: balance;
 }
 
 .login-page .login-panel {
@@ -65,26 +74,17 @@
 }
 
 .login-page .login-heading {
-  margin-bottom: 38px;
-}
-
-.login-page .login-heading::before {
-  content: "";
-  display: block;
-  width: 28px;
-  height: 3px;
-  margin-bottom: 22px;
-  background: var(--blue);
+  margin-bottom: 30px;
 }
 
 .login-page .login-heading h1,
 .login-page .join-heading h1 {
   margin: 0;
   color: var(--navy-dark);
-  font-size: 36px;
+  font-size: 32px;
   font-weight: 600;
   line-height: 1.15;
-  letter-spacing: -1.35px;
+  letter-spacing: -1px;
 }
 
 .login-page .login-form-wrap .field {
@@ -102,10 +102,10 @@
 .login-page .login-form-wrap input {
   min-height: 54px;
   border-color: #dce3eb;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface);
   font-size: 14px;
-  box-shadow: 0 1px 2px #112a4205;
+  box-shadow: none;
 }
 
 .login-page .login-form-wrap input:focus {
@@ -115,9 +115,9 @@
 
 .login-page .login-form-wrap .button.primary {
   min-height: 52px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--navy);
-  box-shadow: 0 2px 3px #112a420d;
+  box-shadow: none;
   font-size: 14px;
   font-weight: 650;
 }
@@ -149,9 +149,8 @@
 .login-page .login-form-wrap > .installed-version {
   display: block;
   width: 100%;
-  margin-top: 34px;
-  padding-top: 20px;
-  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 0;
   color: #526b81;
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -199,36 +198,36 @@
   }
 
   .login-page .login-identity {
-    min-height: 232px;
-    height: 232px;
+    min-height: 145px;
+    height: 145px;
     flex: 0 0 auto;
-    padding: 24px;
-    gap: 24px;
-    justify-content: space-between;
-    border-radius: 16px;
+    padding: 20px;
+    gap: 12px;
+    justify-content: center;
+    border-radius: 6px;
+  }
+
+  .login-page .login-identity::before {
     background-position: center 68%;
-    background-image:
-      linear-gradient(90deg, #edf2f6e6 0%, #edf2f699 44%, #edf2f600 100%),
-      url("/brand/ruta-tomasini-mobile.webp");
+    background-image: url("/brand/ruta-tomasini-mobile.webp");
   }
 
   .login-page .login-identity .official-brand {
-    width: 96px;
+    width: 84px;
     height: auto;
   }
 
   .login-page .login-identity > p {
-    max-width: 250px;
+    max-width: 100%;
     margin: 0;
-    font-size: 27px;
-    line-height: 1.15;
-    letter-spacing: -1px;
-    text-wrap: balance;
+    font-size: 15px;
+    line-height: 1.4;
+    letter-spacing: -0.15px;
   }
 
   .login-page .login-panel {
     width: 100%;
-    padding: 36px 14px 22px;
+    padding: 32px 14px 22px;
   }
 
   .login-page .login-form-wrap {
@@ -239,13 +238,9 @@
     margin-bottom: 28px;
   }
 
-  .login-page .login-heading::before {
-    display: none;
-  }
-
   .login-page .login-heading h1,
   .login-page .join-heading h1 {
-    font-size: 29px;
+    font-size: 28px;
     letter-spacing: -1px;
   }
 
@@ -259,7 +254,7 @@
 
   .login-page .login-form-wrap > .installed-version {
     margin-top: 24px;
-    padding-top: 18px;
+    padding-top: 0;
   }
 }
 
@@ -269,19 +264,7 @@
   }
 
   .login-page .login-identity {
-    min-height: 188px;
-    height: 188px;
-    padding: 20px;
-    gap: 16px;
-  }
-
-  .login-page .login-identity .official-brand {
-    width: 84px;
-  }
-
-  .login-page .login-identity > p {
-    max-width: 230px;
-    font-size: 25px;
+    padding: 18px;
   }
 
   .login-page .login-panel {

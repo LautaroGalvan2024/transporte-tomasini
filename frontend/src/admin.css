@@ -119,15 +119,13 @@
   color: #173858;
 }
 .admin-page .admin-tabs > button > span {
-  background: #edf1f5;
-  color: #65788a;
+  color: var(--muted);
   padding: 2px 6px;
-  border-radius: 5px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .admin-page .admin-tabs > button.active > span {
-  background: #e7eff8;
-  color: #173858;
+  color: inherit;
 }
 .admin-page .admin-section-toolbar .admin-tabs {
   border-bottom: 0;
@@ -1561,11 +1559,7 @@
     border-radius: 8px;
   }
   .main-page-obligations .admin-tabs > button.active {
-    background: var(--navy);
-    color: white;
-  }
-  .main-page-obligations .admin-tabs > button.active > span {
-    color: inherit;
-    background: #ffffff20;
+    background: var(--soft);
+    color: var(--navy-dark);
   }
 }

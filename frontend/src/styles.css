@@ -12,9 +12,9 @@
   --line: #e5eaf0;
   --surface: #fff;
   --soft: #f4f6f9;
-  --ledger-heading: #eaf0f5;
+  --ledger-heading: #f4f6f8;
   --ledger-heading-text: #395267;
-  --ledger-stripe: #f6f9fb;
+  --ledger-stripe: #fafbfc;
 }
 * {
   box-sizing: border-box;
@@ -222,11 +222,9 @@ strong {
   background: var(--navy);
   color: #fff;
   border-color: var(--navy);
-  box-shadow: 0 3px 8px #19365012;
 }
 .button.primary:hover:not(:disabled) {
-  background: #244b6a;
-  box-shadow: 0 4px 14px #19365020;
+  background: var(--navy-dark);
 }
 .button.secondary {
   background: #fff;
@@ -427,7 +425,7 @@ strong {
   background: #eaf5ee;
 }
 .badge.warning {
-  color: #936b21;
+  color: #8c641b;
   background: #fff5dc;
 }
 .badge.danger {
@@ -435,7 +433,7 @@ strong {
   background: #fff0ee;
 }
 .badge.neutral {
-  color: #728095;
+  color: #536779;
   background: #f0f3f7;
 }
 .count-pill {
@@ -638,20 +636,12 @@ strong {
   background: #f5f7fa;
 }
 .nav-item.active {
-  background: var(--navy);
-  color: var(--surface);
+  background: var(--soft);
+  color: var(--navy-dark);
   font-weight: 700;
 }
 .nav-item.active svg {
   stroke-width: 2;
-}
-.nav-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  border: 1px solid #b1c6d5;
-  margin-left: auto;
-  flex: none;
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -714,7 +704,7 @@ strong {
   color: var(--navy);
 }
 .main-area {
-  background: linear-gradient(to bottom, #edf2f6, var(--soft) 320px);
+  background: #f8fafb;
   margin-left: var(--sidebar);
   min-height: 100vh;
   display: flex;
@@ -728,7 +718,7 @@ strong {
   justify-content: space-between;
   padding: 0 38px;
   gap: 20px;
-  background: #f8fafc;
+  background: var(--surface);
 }
 .desktop-breadcrumb {
   display: flex;
@@ -2111,16 +2101,15 @@ strong {
   }
   .mobile-nav > button.active {
     color: var(--navy);
-    background: transparent;
+    position: relative;
     font-weight: 800;
   }
-  .mobile-nav > button.active > svg {
-    box-sizing: content-box;
-    padding: 2px 13px;
-    margin-block: -2px;
-    color: white;
-    background: var(--navy);
-    border-radius: 20px;
+  .mobile-nav > button.active::before {
+    content: "";
+    position: absolute;
+    top: -5px;
+    width: 24px;
+    border-top: 2px solid currentColor;
   }
   .desktop-footer {
     display: none;

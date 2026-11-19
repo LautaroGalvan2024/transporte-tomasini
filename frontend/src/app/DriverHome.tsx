@@ -16,7 +16,6 @@ import {
   StatusBadge,
 } from "../ui";
 import { useData } from "../useData";
-import { HomeRouteMark } from "./HomeRouteMark";
 
 export function DriverHome(props: PageProps) {
   const { data, error, loading, refresh } = useData<Dashboard>("/dashboard");
@@ -59,12 +58,11 @@ export function DriverHome(props: PageProps) {
             </div>
           </>
         ) : (
-          <div>
+          <div className="vehicle-empty">
             <strong>Sin camión asignado</strong>
             <span>Pedí a administración que asigne tu unidad habitual.</span>
           </div>
         )}
-        <HomeRouteMark className="vehicle-route-mark" />
       </section>
       <div className="month-summary" aria-label="Resumen del mes">
         <span>Este mes</span>
