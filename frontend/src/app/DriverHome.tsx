@@ -16,6 +16,7 @@ import {
   StatusBadge,
 } from "../ui";
 import { useData } from "../useData";
+import { HomeRouteMark } from "./HomeRouteMark";
 
 export function DriverHome(props: PageProps) {
   const { data, error, loading, refresh } = useData<Dashboard>("/dashboard");
@@ -42,7 +43,7 @@ export function DriverHome(props: PageProps) {
         </span>
         {truck ? (
           <>
-            <div>
+            <div className="vehicle-identity">
               <strong>{truck.plate}</strong>
               <span>{truck.label}</span>
             </div>
@@ -63,14 +64,24 @@ export function DriverHome(props: PageProps) {
             <span>Pedí a administración que asigne tu unidad habitual.</span>
           </div>
         )}
+        <HomeRouteMark className="vehicle-route-mark" />
       </section>
       <div className="month-summary" aria-label="Resumen del mes">
         <span>Este mes</span>
         <strong>
-          {formatKm(data.stats.tripsThisMonth)}{" "}
-          {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"}
+          <span className="month-value">
+            {formatKm(data.stats.tripsThisMonth)}
+          </span>{" "}
+          <span className="month-unit">
+            {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"}
+          </span>
         </strong>
-        <strong>{formatKm(data.stats.kilometersThisMonth)} km</strong>
+        <strong>
+          <span className="month-value">
+            {formatKm(data.stats.kilometersThisMonth)}
+          </span>{" "}
+          <span className="month-unit">km</span>
+        </strong>
       </div>
       <div className="driver-ledger">
         <section className="driver-recent">

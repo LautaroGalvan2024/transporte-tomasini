@@ -12,7 +12,6 @@
   --line: #e5eaf0;
   --surface: #fff;
   --soft: #f4f6f9;
-  --heading-rule: linear-gradient(to bottom, #315e82 72%, #b1c6d5 72%);
   --ledger-heading: #eaf0f5;
   --ledger-heading-text: #395267;
   --ledger-stripe: #f6f9fb;
@@ -115,7 +114,7 @@ textarea:focus {
 }
 input::placeholder,
 textarea::placeholder {
-  color: #94a0af;
+  color: var(--muted);
   font-weight: 400;
 }
 textarea {
@@ -639,19 +638,20 @@ strong {
   background: #f5f7fa;
 }
 .nav-item.active {
-  background: #edf2f7;
-  color: var(--navy);
-  font-weight: 800;
+  background: var(--navy);
+  color: var(--surface);
+  font-weight: 700;
 }
 .nav-item.active svg {
-  stroke-width: 2.2;
+  stroke-width: 2;
 }
 .nav-dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--navy);
+  border: 1px solid #b1c6d5;
   margin-left: auto;
+  flex: none;
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -714,6 +714,7 @@ strong {
   color: var(--navy);
 }
 .main-area {
+  background: linear-gradient(to bottom, #edf2f6, var(--soft) 320px);
   margin-left: var(--sidebar);
   min-height: 100vh;
   display: flex;
@@ -748,9 +749,14 @@ strong {
   align-items: center;
 }
 .today-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
-  color: #94a0af;
-  text-transform: capitalize;
+  color: var(--muted);
+}
+.today-label > span::first-letter {
+  text-transform: uppercase;
 }
 .online-status {
   display: flex;
@@ -1131,49 +1137,6 @@ strong {
 .road-stop.end > span {
   background: #91aec3;
 }
-.login-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 45px;
-  position: relative;
-}
-.login-form-wrap {
-  width: 100%;
-  max-width: 358px;
-  padding: 50px 0;
-}
-.welcome-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f0f4f8;
-  color: #69849c;
-  width: 55px;
-  height: 55px;
-  border: 1px solid #e5ecf3;
-  border-radius: 17px;
-  margin-bottom: 27px;
-}
-.login-heading h2 {
-  font-size: 30px;
-  letter-spacing: -1px;
-  color: #203a52;
-  font-weight: 750;
-  margin-bottom: 10px;
-}
-.login-heading p {
-  font-size: 13px;
-  color: #96a3b1;
-  margin-bottom: 32px;
-}
-.login-form-wrap .field {
-  margin-bottom: 20px;
-}
-.login-form-wrap .field-label {
-  font-size: 12px;
-}
 .password-field {
   display: flex;
   position: relative;
@@ -1194,43 +1157,6 @@ strong {
   display: grid;
   place-items: center;
   color: #536779;
-}
-.login-submit {
-  width: 100%;
-  margin-top: 10px;
-  min-height: 53px;
-  justify-content: space-between;
-}
-.login-help {
-  width: 100%;
-  min-height: 48px;
-  font-size: 12px;
-  color: #7991a6;
-  margin-top: 12px;
-}
-.login-help:hover {
-  color: var(--navy);
-}
-.login-security {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border-top: 1px solid #edf1f5;
-  margin-top: 30px;
-  padding-top: 24px;
-  font-size: 12px;
-  color: #a7b2bd;
-}
-.login-copyright {
-  position: absolute;
-  bottom: 27px;
-  color: #afb8c2;
-  font-size: 12px;
-  letter-spacing: 0.15px;
-}
-.login-mobile-brand {
-  display: none;
 }
 .back-link {
   display: inline-flex;
@@ -1403,7 +1329,7 @@ strong {
   border-radius: 10px;
   margin-bottom: 23px;
   font-size: 12px;
-  color: #8096aa;
+  color: #536779;
   line-height: 1.6;
 }
 .odometer-reference > span > strong {
@@ -1742,29 +1668,6 @@ strong {
 .list-totals > svg {
   margin-left: auto;
 }
-.route-cell {
-  text-align: left;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-height: 48px;
-  justify-content: center;
-}
-.route-cell strong {
-  font-size: 12px;
-  color: #405c74;
-}
-.route-cell span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #8194a7;
-}
-.route-cell span svg {
-  color: #afbfcc;
-}
 .trip-mobile-list {
   display: none;
 }
@@ -2013,6 +1916,11 @@ strong {
 .mobile-menu-list button:hover {
   background: #f0f4f9;
 }
+.mobile-menu-list button[aria-current="page"] {
+  background: var(--ledger-heading);
+  color: var(--navy);
+  font-weight: 750;
+}
 @media (min-width: 1600px) {
   .main-content {
     padding-top: 45px;
@@ -2118,9 +2026,6 @@ strong {
   .trip-form-layout {
     grid-template-columns: 1fr;
   }
-  .login-panel {
-    padding: 35px;
-  }
   .trip-desktop-table .badge {
     font-size: 12px;
     padding: 5px;
@@ -2206,7 +2111,16 @@ strong {
   }
   .mobile-nav > button.active {
     color: var(--navy);
-    background: #eff4f9;
+    background: transparent;
+    font-weight: 800;
+  }
+  .mobile-nav > button.active > svg {
+    box-sizing: content-box;
+    padding: 2px 13px;
+    margin-block: -2px;
+    color: white;
+    background: var(--navy);
+    border-radius: 20px;
   }
   .desktop-footer {
     display: none;
@@ -2281,69 +2195,6 @@ strong {
   }
 }
 @media (max-width: 600px) {
-  .login-page {
-    display: flex;
-    min-height: 100dvh;
-    background: #f8fafc;
-  }
-  .login-panel {
-    width: 100%;
-    padding: 34px 27px 60px;
-    justify-content: flex-start;
-  }
-  .login-mobile-brand {
-    display: block;
-    width: 100%;
-    max-width: 360px;
-    margin: 4px 0 25px;
-  }
-  .login-mobile-brand .brand-name {
-    font-size: 31px;
-  }
-  .login-form-wrap {
-    padding: 40px 0 30px;
-    max-width: 360px;
-  }
-  .welcome-icon {
-    width: 53px;
-    height: 53px;
-    margin-bottom: 25px;
-  }
-  .login-heading h2 {
-    font-size: 30px;
-  }
-  .login-heading p {
-    font-size: 14px;
-    margin-bottom: 30px;
-  }
-  .login-form-wrap .field-label {
-    font-size: 13px;
-  }
-  .login-form-wrap .field {
-    margin-bottom: 22px;
-  }
-  .login-form-wrap input {
-    background: #fff;
-    height: 55px;
-  }
-  .login-submit {
-    min-height: 55px;
-    margin-top: 7px;
-    font-size: 15px;
-  }
-  .login-help {
-    font-size: 12px;
-    margin-top: 14px;
-  }
-  .login-security {
-    font-size: 12px;
-    margin-top: 28px;
-    padding-top: 25px;
-  }
-  .login-copyright {
-    bottom: 24px;
-    font-size: 12px;
-  }
   .topbar {
     padding: 0 20px;
     height: 76px;
@@ -3023,10 +2874,6 @@ strong {
   .calculated-distance > span {
     font-size: 12px;
   }
-  .login-panel {
-    padding-left: 23px;
-    padding-right: 23px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -3057,10 +2904,6 @@ strong {
 .reminder-row small,
 .reminders-foot,
 .account-profile p,
-.login-heading p,
-.login-help,
-.login-security,
-.login-copyright,
 .form-section-title p,
 .odometer-reference small,
 .recent-routes > span,
@@ -3197,15 +3040,6 @@ strong {
   }
   .date-fields {
     gap: 22px;
-  }
-  .login-heading p {
-    font-size: 14px;
-  }
-  .login-security {
-    font-size: 12px;
-  }
-  .login-help {
-    font-size: 13px;
   }
   .detail-grid dd {
     font-size: 13px;

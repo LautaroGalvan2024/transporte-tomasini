@@ -71,10 +71,7 @@ function TripTableRow({ row, role, onOpen }: TripRowProps) {
       <td>
         <button className="route-cell" onClick={() => onOpen(t)}>
           <strong>{t.origin}</strong>
-          <span>
-            <ArrowRight size={14} />
-            {t.destination}
-          </span>
+          <span>{t.destination}</span>
         </button>
       </td>
       <td>

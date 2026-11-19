@@ -10,6 +10,7 @@ import {
   Info,
   LoaderCircle,
   Plus,
+  Route,
   Truck as TruckIcon,
 } from "lucide-react";
 import { api, ApiError, send } from "../../api";
@@ -488,7 +489,10 @@ export function TripForm({
         </div>
         <div className="trip-core">
           <section className="trip-route-block">
-            <h2>Recorrido</h2>
+            <h2>
+              <Route size={18} aria-hidden="true" />
+              Recorrido
+            </h2>
             <div className="grid2">
               {user.role === "ADMIN" ? (
                 <Field label="Chofer" error={fields.driverId}>
@@ -635,7 +639,10 @@ export function TripForm({
             </div>
           </section>
           <section className="trip-km-block">
-            <h2>Kilómetros y controles</h2>
+            <h2>
+              <Gauge size={18} aria-hidden="true" />
+              Kilómetros y controles
+            </h2>
             {truck && (
               <div className="odometer-reference">
                 <Info size={18} />

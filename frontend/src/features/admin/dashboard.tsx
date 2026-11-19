@@ -10,6 +10,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { Dashboard, PageProps } from "../../types";
+import { HomeRouteMark } from "../../app/HomeRouteMark";
 import { EmptyState, StatusBadge, formatKm } from "../../ui";
 import { dateLabel } from "./formatting";
 import {
@@ -66,6 +67,7 @@ export function AdminDashboard({ onNavigate }: PageProps) {
                 <small>km</small>
               </strong>
               <span>{state.data.stats.tripsThisMonth} viajes</span>
+              <HomeRouteMark className="metric-route-mark" />
             </button>
             <button onClick={() => onNavigate("trips")}>
               <span>Viajes por revisar</span>
