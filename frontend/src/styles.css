@@ -12,6 +12,10 @@
   --line: #e5eaf0;
   --surface: #fff;
   --soft: #f4f6f9;
+  --heading-rule: linear-gradient(to bottom, #315e82 72%, #b1c6d5 72%);
+  --ledger-heading: #eaf0f5;
+  --ledger-heading-text: #395267;
+  --ledger-stripe: #f6f9fb;
 }
 * {
   box-sizing: border-box;
@@ -514,9 +518,9 @@ strong {
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.65px;
-  color: #8290a1;
+  color: var(--ledger-heading-text);
   text-transform: uppercase;
-  background: #f8f9fb;
+  background: var(--ledger-heading);
   padding: 14px 20px;
   border-top: 1px solid #edf0f4;
   border-bottom: 1px solid #edf0f4;
@@ -529,6 +533,10 @@ strong {
 }
 .data-table tbody tr:last-child td {
   border-bottom: 0;
+}
+.data-table tbody tr:nth-child(even):not(:hover),
+.trip-mobile-list > .trip-mobile-card:nth-child(even):not(:hover) {
+  background-color: var(--ledger-stripe);
 }
 .data-table tbody tr:hover {
   background: #fafbfd;
