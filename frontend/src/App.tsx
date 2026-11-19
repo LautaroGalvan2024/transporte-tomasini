@@ -1,23 +1,12 @@
+import { useCallback, useEffect, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
-import {
-  ArrowRight,
-  ArrowUpRight,
   Bell,
   ChevronRight,
   CircleCheck,
-  Clock3,
   Download,
-  Gauge,
   House,
   LogOut,
   Menu,
-  Plus,
   Route,
   Settings2,
   ShieldCheck,
@@ -27,23 +16,10 @@ import {
   X,
   FileSpreadsheet,
   CalendarDays,
-  LockKeyhole,
-  LoaderCircle,
 } from "lucide-react";
 import { api, send } from "./api";
-import type { Dashboard, PageProps, User } from "./types";
-import {
-  EmptyState,
-  ErrorState,
-  Field,
-  formatDate,
-  formatKm,
-  Loading,
-  Modal,
-  PasswordField,
-  StatusBadge,
-} from "./ui";
-import { useData } from "./useData";
+import type { PageProps, User } from "./types";
+import { Loading, Modal } from "./ui";
 import { TripForm, TripsPage } from "./pages/Trips";
 import {
   AdminDashboard,
@@ -54,14 +30,22 @@ import {
   ReportsPage,
   SettingsPage,
 } from "./pages/Admin";
-
 import { Brand } from "./Brand";
 import { InstalledVersion } from "./FrontendVersion";
 import { useInstallShortcut } from "./InstallShortcut";
 import { JoinPage } from "./pages/Join";
 import { HolidayCalendarBanner } from "./pages/Holidays";
-import { holidayYearFromLocation, type HolidayNavigation } from "./holiday-types";
-const shortcutItem = {
+import { Login, Account, Reauthenticate } from "./app/SessionForms";
+import { DriverHome } from "./app/DriverHome";
+import { useNavigation } from "./app/useNavigation";
+import type { Destination } from "./app/destinations";
+
+type MenuDestination = {
+  id: Destination | "menu" | "install-shortcut";
+  label: string;
+  Icon: typeof House;
+};
+const shortcutItem: MenuDestination = {
   id: "install-shortcut",
   label: "Crear acceso directo",
   Icon: Download,
@@ -75,29 +59,35 @@ const destinations = [
   { id: "obligations", label: "Vencimientos", Icon: CalendarDays },
   { id: "reports", label: "Reportes", Icon: FileSpreadsheet },
   { id: "settings", label: "Configuración", Icon: Settings2 },
-];
-const pathnamePage = () => location.pathname.split("/")[1] || "home";
+] satisfies MenuDestination[];
 
 export function App() {
+  const {
+    page,
+    mobileMenu,
+    setMobileMenu,
+    editTrip,
+    setEditTrip,
+    editor,
+    markTrip,
+    markHolidays,
+    pendingAction,
+    setPendingAction,
+    navigationRevision,
+    holidayNavigation,
+    performNavigate,
+    navigate,
+  } = useNavigation();
   const shortcut = useInstallShortcut();
   const [user, setUser] = useState<User | null>(null),
     [checking, setChecking] = useState(true),
-    [page, setPage] = useState(pathnamePage),
-    [mobileMenu, setMobileMenu] = useState(false),
     [toast, setToast] = useState<{ message: string; kind: string } | null>(
       null,
     ),
-    [editTrip, setEditTrip] = useState<string | null>(null),
     [authError, setAuthError] = useState(""),
-    [dirtyForm, setDirtyForm] = useState(false),
-    [pendingNavigation, setPendingNavigation] = useState<string | null>(null),
     [online, setOnline] = useState(navigator.onLine),
     [reauth, setReauth] = useState(false),
     [joinRevision, setJoinRevision] = useState(0);
-  const [holidayNavigation, setHolidayNavigation] = useState<HolidayNavigation | null>(null);
-  const [navigationRevision, setNavigationRevision] = useState(0);
-  const navigationRef = useRef({ page, dirtyForm });
-  navigationRef.current = { page, dirtyForm };
   const check = useCallback(() => {
     setChecking(true);
     setAuthError("");
@@ -113,63 +103,15 @@ export function App() {
     check();
   }, [check]);
   useEffect(() => {
-    const pop = () => {
-      const target = pathnamePage();
-      if (navigationRef.current.dirtyForm) {
-        const targetWithQuery = target + location.search;
-        history.pushState(
-          {},
-          "",
-          navigationRef.current.page === "home"
-            ? "/"
-            : `/${navigationRef.current.page}`,
-        );
-        setPendingNavigation(targetWithQuery);
-        return;
-      }
-      setPage(target);
-      setNavigationRevision((value) => value + 1);
-      const holidayYear = holidayYearFromLocation();
-      if (target === "settings" && holidayYear !== null)
-        setHolidayNavigation({ year: holidayYear, request: Date.now() });
-      if (target !== "new-trip") setEditTrip(null);
-      setMobileMenu(false);
-    };
     const expired = () => setReauth(true);
     const invitationChanged = () => setJoinRevision((value) => value + 1);
-    window.addEventListener("popstate", pop);
     window.addEventListener("tomasini:session-expired", expired);
     window.addEventListener("hashchange", invitationChanged);
     return () => {
-      window.removeEventListener("popstate", pop);
       window.removeEventListener("tomasini:session-expired", expired);
       window.removeEventListener("hashchange", invitationChanged);
     };
   }, []);
-  const performNavigate = useCallback((next: string) => {
-    const nextPage = next.split("?")[0];
-    setDirtyForm(false);
-    if (nextPage !== "new-trip") setEditTrip(null);
-    setPage(nextPage);
-    setNavigationRevision((value) => value + 1);
-    setMobileMenu(false);
-    history.pushState({}, "", next === "home" ? "/" : `/${next}`);
-    const holidayYear = holidayYearFromLocation();
-    setHolidayNavigation(nextPage === "settings" && holidayYear !== null
-      ? { year: holidayYear, request: Date.now() }
-      : null);
-    window.scrollTo({ top: 0, behavior: "instant" });
-  }, []);
-  const navigate = useCallback(
-    (next: string) => {
-      if (dirtyForm) {
-        setPendingNavigation(next);
-        return;
-      }
-      performNavigate(next);
-    },
-    [dirtyForm, performNavigate],
-  );
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -190,8 +132,8 @@ export function App() {
     return () => clearTimeout(id);
   }, [toast]);
   async function logout(force = false) {
-    if (dirtyForm && !force) {
-      setPendingNavigation("logout");
+    if (editor && !force) {
+      setPendingAction({ kind: "logout" });
       return;
     }
     try {
@@ -243,7 +185,7 @@ export function App() {
       />
     );
   const props: PageProps = { user, onNavigate: navigate, onNotify: notify };
-  const allowed =
+  const allowed: MenuDestination[] =
     user.role === "ADMIN"
       ? destinations
       : [
@@ -251,8 +193,8 @@ export function App() {
           { id: "trips", label: "Mis viajes", Icon: Route },
         ];
   const isForm = page === "new-trip";
-  function menuButton({ id, label, Icon }: (typeof destinations)[number], mobile: boolean) {
-    const isShortcut = id === shortcutItem.id;
+  function menuButton({ id, label, Icon }: MenuDestination, mobile: boolean) {
+    const isShortcut = id === "install-shortcut";
     const active = !isShortcut && (id === "menu" ? mobileMenu : page === id);
     return (
       <button
@@ -294,7 +236,7 @@ export function App() {
           <TripForm
             {...props}
             tripId={editTrip}
-            onDirtyChange={setDirtyForm}
+            onDirtyChange={markTrip}
             onDone={() => performNavigate("trips")}
             onCancel={() => performNavigate("trips")}
           />
@@ -317,41 +259,26 @@ export function App() {
         return (
           <Account {...props} onLogout={() => logout()} onChanged={check} />
         );
+    }
+    if (props.user.role !== "ADMIN") return <DriverHome {...props} />;
+    switch (page) {
       case "fleet":
-        return user?.role === "ADMIN" ? (
-          <FleetPage {...props} />
-        ) : (
-          <DriverHome {...props} />
-        );
+        return <FleetPage {...props} />;
       case "drivers":
-        return user?.role === "ADMIN" ? (
-          <DriversPage {...props} />
-        ) : (
-          <DriverHome {...props} />
-        );
+        return <DriversPage {...props} />;
       case "users":
-        return user?.role === "ADMIN" ? (
-          <UsersPage {...props} />
-        ) : (
-          <DriverHome {...props} />
-        );
+        return <UsersPage {...props} />;
       case "obligations":
-        return user?.role === "ADMIN" ? (
-          <ObligationsPage {...props} />
-        ) : (
-          <DriverHome {...props} />
-        );
+        return <ObligationsPage {...props} />;
       case "reports":
-        return user?.role === "ADMIN" ? (
-          <ReportsPage {...props} />
-        ) : (
-          <DriverHome {...props} />
-        );
+        return <ReportsPage {...props} />;
       case "settings":
-        return user?.role === "ADMIN" ? (
-          <SettingsPage {...props} holidayNavigation={holidayNavigation} onDirtyChange={setDirtyForm} />
-        ) : (
-          <DriverHome {...props} />
+        return (
+          <SettingsPage
+            {...props}
+            holidayNavigation={holidayNavigation}
+            onDirtyChange={markHolidays}
+          />
         );
       default:
         return <DriverHome {...props} />;
@@ -371,7 +298,9 @@ export function App() {
           <Brand />
         </button>
         <nav className="side-nav" aria-label="Navegación principal">
-          {[allowed[0], shortcutItem, ...allowed.slice(1)].map((item) => menuButton(item, false))}
+          {[allowed[0], shortcutItem, ...allowed.slice(1)].map((item) =>
+            menuButton(item, false),
+          )}
         </nav>
         <div className="sidebar-bottom">
           <button
@@ -429,26 +358,32 @@ export function App() {
           key={`${page}-${editTrip || ""}-${navigationRevision}`}
         >
           {user.role === "ADMIN" && !user.mustChangePassword && (
-            <HolidayCalendarBanner onReview={(year) => navigate(`settings?tab=holidays&year=${year}`)} />
+            <HolidayCalendarBanner
+              onReview={(year) =>
+                navigate(`settings?tab=holidays&year=${year}`)
+              }
+            />
           )}
           {content()}
         </main>
       </div>
       <nav className="mobile-nav" aria-label="Navegación móvil">
-        {[
-          { id: "home", label: "Inicio", Icon: House },
-          {
-            id: "trips",
-            label: user.role === "ADMIN" ? "Viajes" : "Mis viajes",
-            Icon: Route,
-          },
-          shortcutItem,
-          {
-            id: user.role === "ADMIN" ? "menu" : "account",
-            label: user.role === "ADMIN" ? "Más" : "Cuenta",
-            Icon: user.role === "ADMIN" ? Menu : UserRound,
-          },
-        ].map((item) => menuButton(item, true))}
+        {(
+          [
+            { id: "home", label: "Inicio", Icon: House },
+            {
+              id: "trips",
+              label: user.role === "ADMIN" ? "Viajes" : "Mis viajes",
+              Icon: Route,
+            },
+            shortcutItem,
+            {
+              id: user.role === "ADMIN" ? "menu" : "account",
+              label: user.role === "ADMIN" ? "Más" : "Cuenta",
+              Icon: user.role === "ADMIN" ? Menu : UserRound,
+            },
+          ] satisfies MenuDestination[]
+        ).map((item) => menuButton(item, true))}
       </nav>
       {shortcut.dialog}
       {mobileMenu && (
@@ -489,31 +424,35 @@ export function App() {
           }}
         />
       )}
-      {pendingNavigation && (
+      {pendingAction && (
         <Modal
-          title={isForm ? "Tu viaje todavía no está guardado" : "Hay cambios sin guardar"}
-          onClose={() => setPendingNavigation(null)}
+          title={
+            editor === "trip"
+              ? "Tu viaje todavía no está guardado"
+              : "Hay cambios sin guardar"
+          }
+          onClose={() => setPendingAction(null)}
         >
           <div className="modal-body">
             <p>
-              {isForm
+              {editor === "trip"
                 ? "Si salís de esta pantalla, se perderá lo que ingresaste. Podés volver a la carga y guardarlo."
                 : "Si salís de esta pantalla, se perderán los cambios que todavía no guardaste en el calendario."}
             </p>
             <div className="row-actions">
               <button
                 className="button secondary"
-                onClick={() => setPendingNavigation(null)}
+                onClick={() => setPendingAction(null)}
               >
-                {isForm ? "Seguir cargando" : "Seguir editando"}
+                {editor === "trip" ? "Seguir cargando" : "Seguir editando"}
               </button>
               <button
                 className="button danger"
                 onClick={() => {
-                  const next = pendingNavigation;
-                  setPendingNavigation(null);
-                  if (next === "logout") void logout(true);
-                  else performNavigate(next);
+                  const next = pendingAction;
+                  setPendingAction(null);
+                  if (next.kind === "logout") void logout(true);
+                  else performNavigate(next.target);
                 }}
               >
                 Salir sin guardar
@@ -539,430 +478,5 @@ export function App() {
         </div>
       )}
     </div>
-  );
-}
-
-function Login({
-  onLogin,
-  initialError,
-  onRetry,
-}: {
-  onLogin: (u: User) => void;
-  initialError: string;
-  onRetry: () => void;
-}) {
-  const [username, setUsername] = useState(""),
-    [password, setPassword] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [help, setHelp] = useState(false);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      onLogin(
-        await send<User>("/auth/login", "POST", {
-          username: username.trim(),
-          password,
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="login-page">
-      <section className="login-identity">
-        <Brand />
-        <p>Tu carga, nuestro compromiso.</p>
-      </section>
-      <section className="login-panel">
-        <div className="login-mobile-brand">
-          <Brand />
-        </div>
-        <div className="login-form-wrap">
-          <div className="login-heading">
-            <h1>Ingresar</h1>
-          </div>
-          {initialError && (
-            <ErrorState message={initialError} onRetry={onRetry} />
-          )}
-          <form onSubmit={submit}>
-            <Field label="Usuario o DNI">
-              <input
-                autoComplete="username"
-                autoCapitalize="none"
-                autoCorrect="off"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Ej. juan.perez o 30123456"
-                required
-                disabled={busy}
-              />
-            </Field>
-            <PasswordField
-              label="Contraseña"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Tu contraseña"
-              required
-              disabled={busy}
-            />
-            {error && (
-              <p className="form-error" role="alert">
-                {error}
-              </p>
-            )}
-            <button className="button primary login-submit" disabled={busy}>
-              {busy ? (
-                <>
-                  <LoaderCircle className="spin" size={20} />
-                  Ingresando…
-                </>
-              ) : (
-                <>
-                  Ingresar
-                  <ArrowRight size={20} />
-                </>
-              )}
-            </button>
-          </form>
-          <button className="login-help" onClick={() => setHelp(true)}>
-            ¿Necesitás ayuda para ingresar?
-          </button>
-          <InstalledVersion />
-        </div>
-      </section>
-      {help && (
-        <Modal title="Te ayudamos a ingresar" onClose={() => setHelp(false)}>
-          <div className="modal-body">
-            <p>
-              Para crear tu cuenta, pedí un enlace de invitación a
-              administración.
-            </p>
-            <p>
-              Si ya tenés cuenta y no recordás la contraseña, administración
-              puede recuperar tu acceso.
-            </p>
-            <button className="button primary" onClick={() => setHelp(false)}>
-              Entendido
-            </button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function DriverHome(props: PageProps) {
-  const { data, error, loading, refresh } = useData<Dashboard>("/dashboard");
-  if (loading && !data) return <Loading />;
-  if (error) return <ErrorState message={error} onRetry={refresh} />;
-  if (!data) return null;
-  const truck = data.assignedTruck;
-  const pending = data.obligations.filter((o) => o.status !== "OK");
-  return (
-    <div className="workspace-page driver-workspace">
-      <div className="workspace-heading">
-        <h1>Hola, {props.user.name.split(" ")[0]}</h1>
-        <button
-          className="button primary"
-          onClick={() => props.onNavigate("new-trip")}
-        >
-          <Plus size={20} />
-          Cargar viaje
-        </button>
-      </div>
-      <section className="vehicle-strip" aria-label="Camión habitual">
-        <span className="vehicle-symbol">
-          <TruckIcon size={30} />
-        </span>
-        {truck ? (
-          <>
-            <div>
-              <strong>{truck.plate}</strong>
-              <span>{truck.label}</span>
-            </div>
-            <div className="vehicle-reading">
-              <strong>
-                {truck.odometer === null
-                  ? "Sin informar"
-                  : `${formatKm(truck.odometer)} km`}
-              </strong>
-              {truck.odometerAt && (
-                <span>Última lectura · {formatDate(truck.odometerAt)}</span>
-              )}
-            </div>
-          </>
-        ) : (
-          <div>
-            <strong>Sin camión asignado</strong>
-            <span>Pedí a administración que asigne tu unidad habitual.</span>
-          </div>
-        )}
-      </section>
-      <div className="month-summary" aria-label="Resumen del mes">
-        <span>Este mes</span>
-        <strong>
-          {formatKm(data.stats.tripsThisMonth)}{" "}
-          {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"}
-        </strong>
-        <strong>{formatKm(data.stats.kilometersThisMonth)} km</strong>
-      </div>
-      <div className="driver-ledger">
-        <section className="driver-recent">
-          <div className="section-heading">
-            <h2>Últimos viajes</h2>
-            <button
-              className="text-button"
-              onClick={() => props.onNavigate("trips")}
-            >
-              Ver todos
-              <ArrowUpRight size={17} />
-            </button>
-          </div>
-          {data.recentTrips.length ? (
-            <div className="recent-trip-list">
-              {data.recentTrips.slice(0, 3).map((t) => (
-                <button
-                  className="recent-trip"
-                  key={t.id}
-                  onClick={() => props.onNavigate("trips")}
-                >
-                  <span className="recent-trip-main">
-                    <strong>
-                      {t.origin}
-                      <ArrowRight size={15} />
-                      {t.destination}
-                    </strong>
-                    <small>
-                      {formatDate(t.departureAt)} · {t.truck.plate}
-                      {t.trailer ? ` · Acoplado ${t.trailer.plate}` : ""}
-                    </small>
-                  </span>
-                  <span className="recent-trip-km">
-                    <strong>{formatKm(t.distanceKm)}</strong>
-                    <small>km</small>
-                  </span>
-                  <ChevronRight size={18} />
-                </button>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="Todavía no cargaste viajes"
-              description="Usá Cargar viaje para registrar el primero."
-            />
-          )}
-        </section>
-        <section className="driver-controls">
-          <div className="section-heading">
-            <h2>Próximos controles</h2>
-          </div>
-          {pending.length ? (
-            pending.slice(0, 2).map((o) => (
-              <div className="control-line" key={o.id}>
-                <StatusBadge status={o.status} />
-                <strong>{o.title}</strong>
-                {o.trailer && <small>Acoplado · {o.trailer.plate}</small>}
-                {o.odometerMissing && <small>Falta informar kilometraje</small>}
-                <span>
-                  {o.dueDate
-                    ? formatDate(o.dueDate)
-                    : o.dueKm
-                      ? `${formatKm(o.dueKm)} km`
-                      : "Pendiente de configurar"}
-                </span>
-              </div>
-            ))
-          ) : (
-            <p className="inline-clear">
-              <CircleCheck size={20} />
-              Sin vencimientos cercanos
-            </p>
-          )}
-          {pending.length > 2 && (
-            <p className="muted">
-              Administración gestiona otros {pending.length - 2} controles
-              pendientes.
-            </p>
-          )}
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function Account({
-  user,
-  onNotify,
-  onChanged,
-  onLogout,
-  required = false,
-}: PageProps & {
-  onChanged: () => void;
-  onLogout: () => void;
-  required?: boolean;
-}) {
-  const [current, setCurrent] = useState(""),
-    [password, setPassword] = useState(""),
-    [repeat, setRepeat] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    if (password !== repeat) {
-      setError("Las contraseñas nuevas no coinciden.");
-      return;
-    }
-    setBusy(true);
-    try {
-      await send("/auth/password", "POST", {
-        currentPassword: current,
-        newPassword: password,
-      });
-      onNotify("Contraseña actualizada. Tus otras sesiones se cerraron.");
-      onChanged();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="workspace-page account-workspace">
-      <div className="workspace-heading">
-        <div>
-          <h1>{required ? "Elegí tu contraseña" : "Mi cuenta"}</h1>
-          {required && <p>Cambiá la contraseña provisoria para continuar.</p>}
-        </div>
-      </div>
-      <div className="account-layout">
-        <section className="panel account-profile">
-          <span className="avatar avatar-large">{user.name[0]}</span>
-          <h2>{user.name}</h2>
-          <p>{user.username}</p>
-          <span className="badge neutral">
-            {user.role === "ADMIN" ? "Administración" : "Chofer"}
-          </span>
-          <button className="button ghost account-signout" onClick={onLogout}>
-            <LogOut size={18} />
-            Cerrar sesión
-          </button>
-          <InstalledVersion />
-        </section>
-        <form className="panel account-form" onSubmit={submit}>
-          <div className="section-heading">
-            <h2>{required ? "Primer ingreso" : "Cambiar contraseña"}</h2>
-            <LockKeyhole size={23} />
-          </div>
-          <PasswordField
-            label="Contraseña actual"
-            autoComplete="current-password"
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-            required
-          />
-          <PasswordField
-            label="Nueva contraseña"
-            hint="Usá al menos 12 caracteres. Podés combinar palabras y números."
-            minLength={12}
-            maxLength={128}
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          <PasswordField
-            label="Repetir nueva contraseña"
-            autoComplete="new-password"
-            value={repeat}
-            onChange={(e) => setRepeat(e.target.value)}
-            required
-          />
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="button primary" disabled={busy}>
-            {busy ? "Guardando…" : "Guardar contraseña"}
-            <ArrowRight size={19} />
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function Reauthenticate({
-  user,
-  onSuccess,
-  onExit,
-}: {
-  user: User;
-  onSuccess: (u: User) => void;
-  onExit: () => void;
-}) {
-  const [password, setPassword] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      onSuccess(
-        await send<User>("/auth/login", "POST", {
-          username: user.username,
-          password,
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Modal
-      title="Volvé a ingresar para continuar"
-      onClose={() => {}}
-      dismissible={false}
-    >
-      <form className="modal-body" onSubmit={submit}>
-        <p>Tu sesión venció. Lo que estabas cargando sigue en la pantalla.</p>
-        <p>
-          <strong>{user.name}</strong> · {user.username}
-        </p>
-        <PasswordField
-          label="Contraseña"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          disabled={busy}
-        />
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="row-actions">
-          <button type="button" className="button secondary" onClick={onExit}>
-            Cerrar sesión
-          </button>
-          <button className="button primary" disabled={busy}>
-            {busy ? "Ingresando…" : "Continuar"}
-          </button>
-        </div>
-      </form>
-    </Modal>
   );
 }

@@ -6,7 +6,6 @@ import {
   subscribeToInstall,
   type InstallResult,
 } from "./install-shortcut";
-import "./install-shortcut.css";
 
 export { registerInstallShortcut } from "./install-shortcut";
 

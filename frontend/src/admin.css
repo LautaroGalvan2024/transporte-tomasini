@@ -281,6 +281,9 @@
   border-bottom: 1px solid #edf1f5;
   transition: background 0.15s;
 }
+.admin-page .admin-record-row:nth-child(even):not(:hover) {
+  background-color: var(--ledger-stripe);
+}
 .admin-fleet-row {
   display: grid;
   grid-template-columns:
@@ -842,10 +845,10 @@
   min-width: 0;
 }
 .admin-page .admin-desktop-table th {
-  color: #65788a;
+  color: var(--ledger-heading-text);
   font-size: 12px;
   padding: 12px 16px;
-  background: #fafbfd;
+  background: var(--ledger-heading);
   line-height: 1.3;
 }
 .admin-page .admin-desktop-table th:first-child {

@@ -67,6 +67,12 @@
 .workspace-heading > div {
   min-width: 0;
 }
+.workspace-heading h1,
+.admin-page-heading h1 {
+  color: var(--navy-dark);
+  padding-inline-start: 12px;
+  background: var(--heading-rule) left center / 3px 0.86em no-repeat;
+}
 .form-tabs {
   display: flex;
   gap: 6px;
