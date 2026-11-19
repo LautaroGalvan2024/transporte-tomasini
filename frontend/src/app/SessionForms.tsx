@@ -3,8 +3,8 @@ import { ArrowRight, LogOut, LockKeyhole, LoaderCircle } from "lucide-react";
 import { send } from "../api";
 import type { PageProps, User } from "../types";
 import { ErrorState, Field, Modal, PasswordField } from "../ui";
-import { Brand } from "../Brand";
 import { InstalledVersion } from "../FrontendVersion";
+import { AccessIdentity } from "./AccessIdentity";
 
 export function Login({
   onLogin,
@@ -40,14 +40,8 @@ export function Login({
   }
   return (
     <div className="login-page">
-      <section className="login-identity">
-        <Brand />
-        <p>Tu carga, nuestro compromiso.</p>
-      </section>
+      <AccessIdentity />
       <section className="login-panel">
-        <div className="login-mobile-brand">
-          <Brand />
-        </div>
         <div className="login-form-wrap">
           <div className="login-heading">
             <h1>Ingresar</h1>

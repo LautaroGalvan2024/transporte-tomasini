@@ -1,0 +1,367 @@
+/* Home views: quiet surfaces, typographic hierarchy and shared alignment. */
+.admin-page.admin-dashboard .admin-metrics {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) repeat(2, minmax(0, 1fr));
+  flex: none;
+  padding: 0;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #e0e5e9;
+  border-radius: 12px;
+}
+.admin-page.admin-dashboard .admin-metrics > button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 0;
+  min-height: 146px;
+  gap: 9px;
+  padding: 24px 28px;
+  background: none;
+  border: 0;
+  border-left: 1px solid #e7ebee;
+  text-align: left;
+  color: #21394c;
+  cursor: pointer;
+}
+.admin-page.admin-dashboard .admin-metrics > button:first-child {
+  border-left: 0;
+  border-radius: 11px 0 0 11px;
+}
+.admin-page.admin-dashboard .admin-metrics > button:last-child {
+  border-radius: 0 11px 11px 0;
+}
+.admin-page.admin-dashboard .admin-metrics > button:hover {
+  background: #f8f9fa;
+}
+.admin-page.admin-dashboard .admin-metrics > button > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #586773;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.admin-page.admin-dashboard .admin-metrics > button > strong {
+  font-size: 36px;
+  letter-spacing: -1.3px;
+  line-height: 1.1;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.admin-page.admin-dashboard .admin-metrics > button:first-child > strong {
+  font-size: 42px;
+}
+.admin-page.admin-dashboard .admin-metrics > button > strong > small {
+  font-size: 15px;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: #586773;
+}
+.admin-page.admin-dashboard .admin-metrics > button.has-alerts > strong {
+  color: #ae493d;
+}
+.admin-page.admin-dashboard .admin-dashboard-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border-color: #e0e5e9;
+  border-radius: 12px;
+}
+.admin-page.admin-dashboard .admin-section-toolbar {
+  padding-inline: 22px;
+  border-bottom-color: #e7ebee;
+}
+.admin-page.admin-dashboard .admin-overview-row {
+  padding-inline: 22px;
+}
+.admin-page.admin-dashboard .admin-overview-row > strong {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.25px;
+}
+.admin-page.admin-dashboard .admin-item-symbol:not(.overdue):not(.upcoming) {
+  background: #f5f7f8;
+  color: #586773;
+}
+
+.driver-workspace .vehicle-strip {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1.2fr) minmax(0, 1fr);
+  align-items: center;
+  min-height: 132px;
+  padding: 28px;
+  gap: 20px;
+  border: 1px solid #e0e5e9;
+  border-radius: 12px 12px 0 0;
+  background: #fff;
+  color: #21394c;
+}
+.driver-workspace .vehicle-symbol {
+  display: grid;
+  place-items: center;
+  color: #586773;
+}
+.driver-workspace .vehicle-strip > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px;
+}
+.driver-workspace .vehicle-strip strong {
+  font-size: 23px;
+  letter-spacing: -0.3px;
+  overflow-wrap: anywhere;
+}
+.driver-workspace .vehicle-strip span:not(.vehicle-symbol) {
+  font-size: 13px;
+  color: #586773;
+  overflow-wrap: anywhere;
+}
+.driver-workspace .vehicle-empty {
+  grid-column: 2 / -1;
+}
+.driver-workspace .vehicle-identity > strong {
+  font-size: 28px;
+  letter-spacing: 0.2px;
+  font-variant-numeric: tabular-nums;
+}
+.driver-workspace .vehicle-reading {
+  padding-left: 32px;
+  border-left: 1px solid #e7ebee;
+}
+.driver-workspace .vehicle-reading > strong {
+  font-size: 28px;
+  letter-spacing: -0.8px;
+  font-variant-numeric: tabular-nums;
+}
+.driver-workspace .month-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  margin: 0;
+  padding: 20px 28px;
+  gap: 32px;
+  font-size: 14px;
+  background: #fff;
+  border: 1px solid #e0e5e9;
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+}
+.driver-workspace .month-summary > span {
+  font-size: 13px;
+  color: #586773;
+}
+.driver-workspace .month-summary > strong {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-weight: 650;
+  white-space: nowrap;
+  color: #21394c;
+}
+.driver-workspace .month-value {
+  font-size: 24px;
+  letter-spacing: -0.65px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.driver-workspace .month-unit {
+  color: #586773;
+  font-size: 13px;
+  font-weight: 500;
+}
+.driver-workspace .driver-ledger {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
+  gap: 20px;
+  margin-top: 22px;
+}
+.driver-workspace .driver-ledger > section {
+  min-width: 0;
+  padding: 18px 24px;
+  border: 1px solid #e0e5e9;
+  border-radius: 12px;
+  background: #fff;
+}
+.driver-workspace .driver-ledger .section-heading {
+  margin-bottom: 10px;
+  min-height: 48px;
+}
+.driver-workspace .driver-ledger h2 {
+  font-size: 17px;
+}
+.driver-workspace .driver-ledger .recent-trip-list {
+  margin: 0;
+}
+.driver-workspace .driver-ledger .recent-trip {
+  padding: 14px 0;
+  gap: 14px;
+  border-top-color: #e7ebee;
+}
+.driver-workspace .driver-ledger .recent-trip-km strong {
+  color: #21394c;
+  font-size: 19px;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.driver-workspace .driver-ledger .recent-trip-km small {
+  color: #586773;
+}
+.driver-workspace .driver-ledger .recent-trip-main small {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #586773;
+}
+.driver-workspace .driver-ledger .recent-trip-main strong {
+  font-size: 14px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.driver-workspace .control-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 16px 0;
+  gap: 7px;
+  border-top: 1px solid #e7ebee;
+}
+.driver-workspace .control-line strong {
+  font-size: 14px;
+}
+.driver-workspace .control-line > span:last-child {
+  color: #586773;
+  font-size: 13px;
+}
+.driver-workspace .inline-clear {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #46765d;
+  padding: 20px 0;
+  font-size: 14px;
+}
+
+@media (min-width: 1100px) {
+  .driver-workspace .driver-ledger {
+    flex: 1;
+    min-height: 0;
+  }
+  .driver-workspace .driver-ledger .recent-trip {
+    height: 76px;
+  }
+}
+@media (max-width: 1099px) {
+  .admin-page.admin-dashboard .admin-dashboard-detail {
+    flex: none;
+  }
+  .driver-workspace .driver-ledger {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+@media (max-width: 950px) {
+  .driver-workspace .vehicle-strip {
+    grid-template-columns: 30px minmax(0, 1fr);
+    min-height: 0;
+    padding: 22px;
+    gap: 20px 16px;
+  }
+  .driver-workspace .vehicle-strip strong {
+    font-size: 21px;
+  }
+  .driver-workspace .vehicle-identity > strong {
+    font-size: 25px;
+  }
+  .driver-workspace .vehicle-reading {
+    grid-column: 1 / -1;
+    padding: 20px 0 0;
+    border-left: 0;
+    border-top: 1px solid #e7ebee;
+  }
+  .driver-workspace .vehicle-reading > strong {
+    font-size: 25px;
+  }
+  .driver-workspace .month-summary {
+    padding: 18px 22px;
+    gap: 20px;
+    font-size: 13px;
+  }
+  .driver-workspace .month-value {
+    font-size: 23px;
+  }
+  .driver-workspace .driver-ledger > section {
+    padding: 17px 20px;
+  }
+}
+@media (max-width: 650px) {
+  .admin-page.admin-dashboard .admin-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-page.admin-dashboard .admin-metrics > button {
+    padding: 20px 18px;
+    min-height: 140px;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button:first-child {
+    grid-column: 1 / -1;
+    min-height: 132px;
+    padding: 22px;
+    border-bottom: 1px solid #e7ebee;
+    border-radius: 11px 11px 0 0;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button:nth-child(2) {
+    border-left: 0;
+    border-radius: 0 0 0 11px;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button:last-child {
+    border-radius: 0 0 11px 0;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button > strong {
+    font-size: 32px;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button:first-child > strong {
+    font-size: 38px;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button > span {
+    font-size: 11px;
+  }
+  .admin-page.admin-dashboard .admin-metrics > button > span:last-of-type {
+    margin-top: auto;
+  }
+  .admin-page.admin-dashboard .admin-section-toolbar,
+  .admin-page.admin-dashboard .admin-overview-row {
+    padding-inline: 16px;
+  }
+  .driver-workspace .month-summary {
+    gap: 18px;
+    padding: 18px 20px;
+  }
+  .driver-workspace .month-summary > span {
+    font-size: 12px;
+  }
+  .driver-workspace .month-summary > strong {
+    gap: 5px;
+  }
+  .driver-workspace .month-value {
+    font-size: 22px;
+  }
+  .driver-workspace .month-unit {
+    font-size: 12px;
+  }
+}
+@media (max-width: 359px) {
+  .driver-workspace .month-summary {
+    padding: 16px;
+    gap: 14px;
+  }
+  .driver-workspace .month-value {
+    font-size: 20px;
+  }
+  .driver-workspace .driver-ledger > section {
+    padding-inline: 16px;
+  }
+}

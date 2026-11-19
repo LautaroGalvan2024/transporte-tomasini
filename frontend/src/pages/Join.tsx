@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   UserRound,
 } from "lucide-react";
-import { Brand } from "../Brand";
+import { AccessIdentity } from "../app/AccessIdentity";
 import { ApiError, send } from "../api";
 import { Field, Loading, PasswordField } from "../ui";
 import type { User } from "../types";
@@ -141,10 +141,7 @@ export function JoinPage({
   }
   return (
     <div className="login-page join-page">
-      <section className="login-identity">
-        <Brand />
-        <p>Tu carga, nuestro compromiso.</p>
-      </section>
+      <AccessIdentity />
       <section className="login-panel">
         <div className="login-form-wrap">
           {loading ? (

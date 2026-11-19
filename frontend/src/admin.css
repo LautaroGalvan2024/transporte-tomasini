@@ -67,8 +67,7 @@
   border-radius: 12px;
   min-width: 0;
 }
-.admin-page .admin-records,
-.admin-page .admin-dashboard-detail {
+.admin-page .admin-records {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -120,68 +119,19 @@
   color: #173858;
 }
 .admin-page .admin-tabs > button > span {
-  background: #edf1f5;
-  color: #65788a;
+  color: var(--muted);
   padding: 2px 6px;
-  border-radius: 5px;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .admin-page .admin-tabs > button.active > span {
-  background: #e7eff8;
-  color: #173858;
+  color: inherit;
 }
 .admin-page .admin-section-toolbar .admin-tabs {
   border-bottom: 0;
 }
 .admin-page .admin-section-toolbar .admin-tabs > button {
   min-height: 56px;
-}
-.admin-page .admin-metrics {
-  display: grid;
-  grid-template-columns: 1.25fr 1fr 1fr;
-  flex: none;
-  padding: 12px 0 16px;
-  border-bottom: 1px solid #dde5ed;
-}
-.admin-page .admin-metrics > button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  background: none;
-  border: 0;
-  padding: 0 28px;
-  text-align: left;
-  color: #142d48;
-  border-right: 1px solid #dce5ee;
-  cursor: pointer;
-}
-.admin-page .admin-metrics > button:first-child {
-  padding-left: 0;
-}
-.admin-page .admin-metrics > button:last-child {
-  border: 0;
-}
-.admin-page .admin-metrics > button > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #65788a;
-}
-.admin-page .admin-metrics > button > strong {
-  font-size: 34px;
-  line-height: 1.1;
-  font-weight: 750;
-  letter-spacing: -1.5px;
-}
-.admin-page .admin-metrics > button > strong > small {
-  font-size: 16px;
-  letter-spacing: 0;
-  font-weight: 500;
-}
-.admin-page .admin-metrics > button.has-alerts > strong {
-  color: #ae493d;
 }
 .admin-page .admin-overview-row {
   display: flex;
@@ -531,9 +481,6 @@
 .admin-form textarea {
   resize: vertical;
 }
-.admin-form input::placeholder {
-  color: #7a899b;
-}
 .admin-form .grid2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -825,10 +772,12 @@
 }
 .admin-report-totals strong {
   font-size: 24px;
+  font-variant-numeric: tabular-nums;
   line-height: 1.2;
   letter-spacing: -0.5px;
   color: #1b3a58;
 }
+
 .admin-report-totals small {
   font-size: 13px;
   font-weight: 500;
@@ -1023,7 +972,6 @@
     height: auto;
   }
   .admin-page .admin-records,
-  .admin-page .admin-dashboard-detail,
   .admin-page .admin-report-results {
     flex: none;
   }
@@ -1125,13 +1073,6 @@
     color: #1e3e5d;
     font-size: 15px;
   }
-  .admin-page .admin-metrics {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-  .admin-page .admin-metrics > button {
-    padding-left: 20px;
-    padding-right: 20px;
-  }
   .admin-page .admin-setting-section {
     grid-template-columns: 1fr 1fr;
     gap: 20px;
@@ -1168,27 +1109,6 @@
     font-size: 13px;
   }
   .admin-page .admin-tabs > button > span {
-    font-size: 12px;
-  }
-  .admin-page .admin-metrics {
-    grid-template-columns: 1fr 1fr;
-    gap: 20px 0;
-    padding: 6px 0 20px;
-  }
-  .admin-page .admin-metrics > button:first-child {
-    grid-column: 1 / -1;
-    border: 0;
-  }
-  .admin-page .admin-metrics > button:nth-child(2) {
-    padding-left: 0;
-  }
-  .admin-page .admin-metrics > button:last-child {
-    padding-right: 0;
-  }
-  .admin-page .admin-metrics > button > strong {
-    font-size: 31px;
-  }
-  .admin-page .admin-metrics > button > span {
     font-size: 12px;
   }
   .admin-page .admin-section-toolbar {
@@ -1614,5 +1534,32 @@
   }
   .admin-page .admin-user-row .admin-row-actions {
     gap: 8px;
+  }
+}
+
+@media (max-width: 440px) {
+  .admin-report-fields > .field:has(select) {
+    grid-column: 1 / -1;
+  }
+  .main-page-obligations .admin-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .main-page-obligations .admin-tabs > button {
+    justify-content: space-between;
+    padding-inline: 12px;
+    min-height: 44px;
+    margin: 0;
+    border: 0;
+    border-radius: 8px;
+  }
+  .main-page-obligations .admin-tabs > button.active {
+    background: var(--soft);
+    color: var(--navy-dark);
   }
 }

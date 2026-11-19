@@ -60,6 +60,9 @@ const destinations = [
   { id: "reports", label: "Reportes", Icon: FileSpreadsheet },
   { id: "settings", label: "Configuración", Icon: Settings2 },
 ] satisfies MenuDestination[];
+const moreDestinations = destinations.filter(
+  ({ id }) => id !== "home" && id !== "trips",
+);
 
 export function App() {
   const {
@@ -193,14 +196,19 @@ export function App() {
           { id: "trips", label: "Mis viajes", Icon: Route },
         ];
   const isForm = page === "new-trip";
+  const inMoreMenu =
+    page === "account" || moreDestinations.some(({ id }) => id === page);
   function menuButton({ id, label, Icon }: MenuDestination, mobile: boolean) {
     const isShortcut = id === "install-shortcut";
-    const active = !isShortcut && (id === "menu" ? mobileMenu : page === id);
+    const active =
+      id === "menu" ? mobileMenu || inMoreMenu : !isShortcut && page === id;
     return (
       <button
         key={id}
         type="button"
         className={`${mobile ? "" : "nav-item"}${active ? " active" : ""}`.trim()}
+        aria-current={active && id !== "menu" ? "page" : undefined}
+        aria-expanded={id === "menu" ? mobileMenu : undefined}
         disabled={isShortcut && shortcut.busy}
         onClick={() => {
           if (isShortcut) void shortcut.open();
@@ -210,7 +218,6 @@ export function App() {
       >
         <Icon size={mobile ? 23 : 20} aria-hidden="true" />
         <span>{label}</span>
-        {!mobile && active && <span className="nav-dot" />}
       </button>
     );
   }
@@ -332,12 +339,15 @@ export function App() {
           </button>
           <div className="topbar-right">
             <span className="today-label">
-              {new Intl.DateTimeFormat("es-AR", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                timeZone: "America/Argentina/Buenos_Aires",
-              }).format(new Date())}
+              <CalendarDays size={15} aria-hidden="true" />
+              <span>
+                {new Intl.DateTimeFormat("es-AR", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  timeZone: "America/Argentina/Buenos_Aires",
+                }).format(new Date())}
+              </span>
             </span>
             <span className={`online-status ${online ? "" : "offline"}`}>
               <InstalledVersion />
@@ -389,16 +399,21 @@ export function App() {
       {mobileMenu && (
         <Modal title="Administración" onClose={() => setMobileMenu(false)}>
           <nav className="mobile-menu-list">
-            {destinations
-              .filter((d) => !["home", "trips"].includes(d.id))
-              .map(({ id, label, Icon }) => (
-                <button key={id} onClick={() => navigate(id)}>
-                  <Icon size={21} />
-                  {label}
-                  <ChevronRight size={18} />
-                </button>
-              ))}
-            <button onClick={() => navigate("account")}>
+            {moreDestinations.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                onClick={() => navigate(id)}
+                aria-current={page === id ? "page" : undefined}
+              >
+                <Icon size={21} />
+                {label}
+                <ChevronRight size={18} />
+              </button>
+            ))}
+            <button
+              onClick={() => navigate("account")}
+              aria-current={page === "account" ? "page" : undefined}
+            >
               <UserRound size={21} />
               Mi cuenta
               <ChevronRight size={18} />

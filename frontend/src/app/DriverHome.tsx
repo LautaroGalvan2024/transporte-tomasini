@@ -42,7 +42,7 @@ export function DriverHome(props: PageProps) {
         </span>
         {truck ? (
           <>
-            <div>
+            <div className="vehicle-identity">
               <strong>{truck.plate}</strong>
               <span>{truck.label}</span>
             </div>
@@ -58,7 +58,7 @@ export function DriverHome(props: PageProps) {
             </div>
           </>
         ) : (
-          <div>
+          <div className="vehicle-empty">
             <strong>Sin camión asignado</strong>
             <span>Pedí a administración que asigne tu unidad habitual.</span>
           </div>
@@ -67,10 +67,19 @@ export function DriverHome(props: PageProps) {
       <div className="month-summary" aria-label="Resumen del mes">
         <span>Este mes</span>
         <strong>
-          {formatKm(data.stats.tripsThisMonth)}{" "}
-          {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"}
+          <span className="month-value">
+            {formatKm(data.stats.tripsThisMonth)}
+          </span>{" "}
+          <span className="month-unit">
+            {data.stats.tripsThisMonth === 1 ? "viaje" : "viajes"}
+          </span>
         </strong>
-        <strong>{formatKm(data.stats.kilometersThisMonth)} km</strong>
+        <strong>
+          <span className="month-value">
+            {formatKm(data.stats.kilometersThisMonth)}
+          </span>{" "}
+          <span className="month-unit">km</span>
+        </strong>
       </div>
       <div className="driver-ledger">
         <section className="driver-recent">

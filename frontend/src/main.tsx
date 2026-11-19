@@ -13,6 +13,8 @@ import "./frontend-version.css";
 import "./install-shortcut.css";
 import "./styles.css";
 import "./refinement.css";
+import "./dashboard.css";
+import "./access.css";
 registerInstallShortcut();
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
