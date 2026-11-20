@@ -16,6 +16,12 @@ OPS = BASE / 'ops/ci'
 RECEIVER = 'ci_deploy.py'
 MODULE = 'ci_migrations.py'
 OLD_RECEIVER_SHA = '18ff4271c160688ab68f1d0a18eb6816ca7a923ea1442745468b7111b7712e6f'
+ADDITIVE_RECEIVER_SHA = '6d3fe86123af0bb6ed6c250a5b28581fc7b309647ddabc6407c8cd0a49f58b9d'
+ADDITIVE_MODULE_SHA = '69b38d1bb4f4ea5f887e99d97a18cf665286d7f3aec7245d7112e75df07a4957'
+PRE_DOMAIN_CORE_SHA = 'bb562b4683b3dccf5fa7c658fc1da6b9d197a98aba6d5c02ecd523d19d02c3f5'
+DOMAIN_CORE_SHA = '8f706ab8f855f22f80bd54128fd2e9a8f070a2029fac78c8d453a52f51241694'
+DOMAIN_HOSTS = ['transporte-tomasini.com', 'transporte-tomasini-api.com',
+                'www.transporte-tomasini.com', 'www.transporte-tomasini-api.com']
 WRAPPER = '#!/bin/sh\n[ "$#" -eq 0 ] || exit 64\nexec /usr/bin/python3 -I /opt/tomasini/ops/ci/ci_deploy.py root\n'
 RULE = 'Defaults:tomasini-ci env_reset,!requiretty\ntomasini-ci ALL=(root) NOPASSWD: /opt/tomasini/ops/ci/deploy-root ""\n'
 
@@ -36,6 +42,25 @@ def protected(path, is_directory=False):
             'Unexpected owner, type or permissions: ' + str(path))
 
 
+def verify_helper(name, bootstrap_sha):
+    path = OPS / name
+    protected(path)
+    installed = digest(path.read_bytes())
+    if installed == bootstrap_sha:
+        return
+    # domain_cutover.py preserved the original helper and recorded the replacement.
+    require(name == 'install_vps.py' and bootstrap_sha == PRE_DOMAIN_CORE_SHA and installed == DOMAIN_CORE_SHA,
+            'CI helper changed: ' + name)
+    state = BASE / 'private/domain-cutover'
+    protected(state, is_directory=True)
+    original, receipt = state / 'core', state / 'active.json'
+    protected(original)
+    protected(receipt)
+    cutover = json.loads(receipt.read_bytes())
+    require(digest(original.read_bytes()) == bootstrap_sha and cutover.get('coreSha256') == installed
+            and cutover.get('hosts') == DOMAIN_HOSTS, 'Unexpected Tomasini domain cutover evidence.')
+
+
 def verify_ci_access():
     for directory in (BASE, OPS.parent, OPS, BASE / 'private'):
         protected(directory, is_directory=True)
@@ -45,8 +70,7 @@ def verify_ci_access():
     require(receipt['status'] == 'ci_access_configured' and receipt['user'] == 'tomasini-ci'
             and receipt['files'][RECEIVER] == OLD_RECEIVER_SHA, 'Unexpected CI bootstrap receipt.')
     for name in ('install_vps.py', 'update_vps.py'):
-        protected(OPS / name)
-        require(digest((OPS / name).read_bytes()) == receipt['files'][name], 'CI helper changed: ' + name)
+        verify_helper(name, receipt['files'][name])
     authorized = Path('/var/lib/tomasini-ci/.ssh/authorized_keys')
     rule = Path('/etc/sudoers.d/tomasini-ci')
     for path in (OPS / 'deploy-root', authorized, rule):
@@ -71,29 +95,32 @@ def install(source, ops, expected):
     protected(receiver)
     old = receiver.read_bytes()
     original_sha = digest(old)
-    require(original_sha in {OLD_RECEIVER_SHA, expected[RECEIVER]}, 'Installed receiver is outside this upgrade.')
+    require(original_sha in {OLD_RECEIVER_SHA, ADDITIVE_RECEIVER_SHA, expected[RECEIVER]}, 'Installed receiver is outside this upgrade.')
     has_module = module.exists() or module.is_symlink()
+    previous_module = None
     if has_module:
         protected(module)
-        require(digest(module.read_bytes()) == expected[MODULE], 'Installed migration module differs from reviewed version.')
+        previous_module = module.read_bytes()
+        allowed = {expected[MODULE]} if original_sha == OLD_RECEIVER_SHA else {ADDITIVE_MODULE_SHA, expected[MODULE]}
+        require(digest(previous_module) in allowed, 'Installed migration module differs from reviewed version.')
     require(original_sha == OLD_RECEIVER_SHA or has_module, 'New receiver is missing its migration module.')
-    # All renames stay on the same filesystem. Installing the module first also keeps the
-    # prior receiver usable across a power loss, and an identical partial install may resume.
+    # With an additive receiver install the rollback guard first. A power loss must
+    # never leave the old rollback logic paired with the expanded migration policy.
+    order = (MODULE, RECEIVER) if original_sha == OLD_RECEIVER_SHA else (RECEIVER, MODULE)
     with tempfile.TemporaryDirectory(prefix='.upgrade-', dir=ops) as tmp:
         staged = Path(tmp)
-        for name, content in {**data, 'previous.py': old}.items():
+        previous = {RECEIVER: old, MODULE: previous_module}
+        backups = {'previous-' + name: content for name, content in previous.items() if content is not None}
+        for name, content in (data | backups).items():
             path = staged / name
             path.write_bytes(content)
             path.chmod(0o644)
-        replaced = False
-        added = False
+        replaced = []
         try:
-            if not has_module:
-                os.replace(staged / MODULE, module)
-                added = True
-            if original_sha == OLD_RECEIVER_SHA:
-                os.replace(staged / RECEIVER, receiver)
-                replaced = True
+            for name in order:
+                if data[name] != previous[name]:
+                    os.replace(staged / name, ops / name)
+                    replaced.append(name)
             for name in expected:
                 protected(ops / name)
                 require(digest((ops / name).read_bytes()) == expected[name], 'Operational copy failed verification.')
@@ -104,10 +131,11 @@ def install(source, ops, expected):
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            timeout=15, check=True)
         except BaseException:
-            if replaced:
-                os.replace(staged / 'previous.py', receiver)
-            if added:
-                module.unlink()
+            for name in reversed(replaced):
+                if previous[name] is None:
+                    (ops / name).unlink()
+                else:
+                    os.replace(staged / ('previous-' + name), ops / name)
             raise
 
 

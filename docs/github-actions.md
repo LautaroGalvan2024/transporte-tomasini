@@ -35,7 +35,7 @@ El workflow nunca ejecuta `ssh-keyscan` para decidir en quién confiar. Una clav
 
 La preparación inicial del receptor en la VPS es un procedimiento administrativo separado. Debe instalar el código revisado de `infra/ci_deploy.py` fuera del alcance del usuario de aplicación, registrar la llave pública exclusiva con comando forzado y limitar sudo al receptor. `tomasini-ci` no tiene shell, PTY, forwarding ni acceso general de administración. Los workflows no instalan ni modifican ese receptor.
 
-Para una instalación que ya cuenta con el receptor original de sólo código, `scripts/upgrade-ci-receiver.ps1` habilita una única vez el receptor con migraciones declarativas. Pide sudo en una terminal local, comprueba la huella del receptor anterior, instala solamente los dos módulos verificados y conserva la llave y regla sudo existentes. Ese comando no forma parte de los despliegues de la aplicación.
+Para actualizar el receptor, ejecutar `scripts/upgrade-ci-receiver.ps1` desde el checkout revisado. Pide sudo en una terminal local y verifica las huellas del receptor y del módulo de migraciones. Admite el receptor original, la versión de campos opcionales instalada en la VPS y un reintento de la actualización revisada. Conserva la llave y regla sudo existentes. El recibo local debe indicar `verified` en el estado y contener las huellas verificadas antes de integrar el PR de aplicación.
 
 ## Publicación y conservación de datos
 
@@ -88,6 +88,14 @@ El resumen de Actions muestra únicamente commit, SHA del release y versión ant
 4. CI contrasta el plan, el SQL y el esquema, y prueba la migración en PostgreSQL aislado. Después del merge, el receptor instalado en la VPS vuelve a generar el SQL desde el plan y lo aplica junto con el registro de Prisma en una sola transacción, comprobando base, esquema, rol e historial. El rol migrador de producción sigue sin LOGIN ni contraseña. Ni el release ni GitHub reciben la credencial de un propietario de la base.
 
 La política admite columnas opcionales `Int`, `BigInt`, `String` y `Boolean` en tablas existentes del esquema Tomasini; los enteros pueden exigir valores no negativos. Borrados, renombres, columnas obligatorias, nuevas tablas, SQL libre y modificaciones del historial quedan fuera de esta política: CI los detiene. Seguir el [procedimiento revisado de migración](deployment.md) si se necesita uno de esos cambios.
+
+## Viajes con distancia directa
+
+La operación revisada `enableTripManualDistance` corresponde exclusivamente a `202611200001_trip_manual_distance`. Su único parámetro es el nombre de la operación. El receptor genera el SQL fijo y coteja los tres campos de `Trip` con el esquema. La restricción admite ambos odómetros o una distancia manual de 0 a 9.999.999 km. El ensayo de CI aplica la migración sobre un viaje ficticio creado con el esquema anterior, compara todos sus campos y ejercita los límites en PostgreSQL.
+
+El primer PR publica los lectores y conserva la creación por odómetro. Confirmar el commit de este primer despliegue en el recibo de la VPS y en el sitio público antes de integrar el segundo PR que habilita la carga administrativa. Cada despliegue conserva su propio respaldo y recibo.
+
+Si falla la primera activación, el receptor pausa las escrituras de Tomasini y comprueba con el rol de aplicación que todos los viajes tienen dos lecturas antes de restituir la versión anterior. Si hay un viaje con odómetros ausentes, conserva la versión compatible para recuperar hacia adelante. Esta comprobación también se aplica cuando una migración quedó confirmada en un intento anterior. Si falla la segunda activación, el primer release ya puede leer y exportar los viajes guardados.
 
 ## Operación del calendario de feriados
 

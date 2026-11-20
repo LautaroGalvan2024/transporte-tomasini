@@ -57,8 +57,10 @@ export const tripFields = z
     destination: text(),
     departureAt: instant,
     arrivalAt: instant,
-    startKm: km,
-    endKm: km,
+    mileageMode: z.enum(["ODOMETER", "DISTANCE"]).optional(),
+    distanceKm: km.optional(),
+    startKm: km.optional(),
+    endKm: km.optional(),
     controlCount: z
       .int32("Ingresá una cantidad entera de controles.")
       .nonnegative("La cantidad de controles no puede ser negativa.")
@@ -78,6 +80,8 @@ export const tripUpdate = tripFields.partial().extend({
 export const km100PreviewBody = tripFields.pick({
   departureAt: true,
   arrivalAt: true,
+  mileageMode: true,
+  distanceKm: true,
   startKm: true,
   endKm: true,
 });

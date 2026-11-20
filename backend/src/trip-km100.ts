@@ -1,11 +1,12 @@
 import type { Tx } from "./db.js";
+import { tripDistance, type TimedTripMileage } from "./trip-mileage.js";
 import { AppError, ensure } from "./errors.js";
 import { getCalendar } from "./holiday-calendar.js";
 import { createKm100Context, evaluateKm100 } from "./holiday-domain.js";
 
 export async function tripKm100(
   tx: Tx,
-  trip: { departureAt: Date; arrivalAt: Date; startKm: number; endKm: number },
+  trip: TimedTripMileage,
   input: { km100?: number | null; km100CalendarToken?: string },
   options: { keepPending?: boolean; resolve?: boolean } = {},
 ) {
@@ -24,7 +25,7 @@ export async function tripKm100(
       "Confirmá los feriados de los años del viaje antes de resolverlo.",
       "KM100_CALENDAR_PENDING",
     );
-  const distance = trip.endKm - trip.startKm;
+  const distance = tripDistance(trip);
   if (input.km100 != null && (input.km100 < 0 || input.km100 > distance))
     throw new AppError(400, "Revisá los kilómetros al 100%.", "KM100_RANGE", {
       km100: "Deben estar entre 0 y la distancia total del viaje.",
@@ -48,7 +49,7 @@ export async function tripKm100(
       "El valor no coincide con el horario del viaje.",
       "KM100_RANGE",
       {
-        km100: `Para este viaje corresponden ${value} km al 100%. Revisá las fechas y el odómetro.`,
+        km100: `Para este viaje corresponden ${value} km al 100%. Revisá las fechas y los kilómetros recorridos.`,
       },
     );
   }

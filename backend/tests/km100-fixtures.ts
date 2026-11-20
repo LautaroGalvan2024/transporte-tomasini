@@ -42,8 +42,9 @@ export async function resolveFixtureKm100(
       .send({
         departureAt: trip.departureAt,
         arrivalAt: trip.arrivalAt,
-        startKm: trip.startKm,
-        endKm: trip.endKm,
+        ...(trip.mileageMode === "DISTANCE"
+          ? { mileageMode: "DISTANCE", distanceKm: trip.distanceKm }
+          : { startKm: trip.startKm, endKm: trip.endKm }),
       });
     assert.equal(preview.status, 200, JSON.stringify(preview.body));
     const resolved = await agent

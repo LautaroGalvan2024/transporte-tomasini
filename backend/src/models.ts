@@ -5,6 +5,7 @@ import { calculateStatus, dateOnly, type Reading } from "./domain.js";
 import { ensure } from "./errors.js";
 import { trailerDtos } from "./trailer-models.js";
 import { parseKm100Context } from "./holiday-domain.js";
+import { tripDistance } from "./trip-mileage.js";
 export { activeTrailer, validateTrailerOverlap } from "./trailer-models.js";
 import {
   adjustmentReading,
@@ -31,7 +32,8 @@ export function tripDto(row: TripRow) {
     arrivalAt: row.arrivalAt.toISOString(),
     startKm: row.startKm,
     endKm: row.endKm,
-    distanceKm: row.endKm - row.startKm,
+    mileageMode: row.manualDistanceKm === null ? "ODOMETER" : "DISTANCE",
+    distanceKm: tripDistance(row),
     controlCount: row.controlCount,
     km100: row.km100,
     km100Context: parseKm100Context(row.km100Context),
@@ -59,7 +61,7 @@ export async function truckDtos(db: Tx = getDb(), truckId?: string) {
     orderBy: { plate: "asc" },
     include: {
       trips: {
-        where: { status: "ACTIVE" },
+        where: { status: "ACTIVE", endKm: { not: null } },
         orderBy: { arrivalAt: "desc" },
         take: 1,
       },
@@ -95,7 +97,7 @@ export async function truckDtos(db: Tx = getDb(), truckId?: string) {
       ...(row.initialOdometer !== null && row.initialOdometerAt !== null
         ? [{ at: row.initialOdometerAt, km: row.initialOdometer }]
         : []),
-      ...row.trips.map((t) => ({ at: t.arrivalAt, km: t.endKm })),
+      ...row.trips.map((t) => ({ at: t.arrivalAt, km: t.endKm! })),
       ...row.obligations.flatMap((o) =>
         o.renewals.map((r) => ({ at: r.performedAt, km: r.odometer! })),
       ),
@@ -260,6 +262,10 @@ export async function validateTruckHistory(
       "OVERLAPPING_TRIP",
     );
   }
+  // Every trip occupies its interval. Only measured trips participate in odometer history.
+  const measuredTrips = [...trips, ...(candidate ? [candidate] : [])].filter(
+    (t) => t.startKm !== null && t.endKm !== null,
+  );
   const readings: Reading[] = [
     ...(truck.initialOdometer !== null && truck.initialOdometerAt !== null
       ? [
@@ -270,9 +276,9 @@ export async function validateTruckHistory(
           },
         ]
       : []),
-    ...[...trips, ...(candidate ? [candidate] : [])].flatMap((t) => [
-      { at: t.departureAt, km: t.startKm, label: "salida de un viaje" },
-      { at: t.arrivalAt, km: t.endKm, label: "llegada de un viaje" },
+    ...measuredTrips.flatMap((t) => [
+      { at: t.departureAt, km: t.startKm!, label: "salida de un viaje" },
+      { at: t.arrivalAt, km: t.endKm!, label: "llegada de un viaje" },
     ]),
     ...renewals.map((r) => ({
       at: r.performedAt,
@@ -281,10 +287,11 @@ export async function validateTruckHistory(
     })),
     ...(extraReading ? [extraReading] : []),
   ];
-  validateAdjustedHistory(readings, await odometerAdjustments(tx, truckId), [
-    ...trips,
-    ...(candidate ? [candidate] : []),
-  ]);
+  validateAdjustedHistory(
+    readings,
+    await odometerAdjustments(tx, truckId),
+    measuredTrips,
+  );
   return truck;
 }
 

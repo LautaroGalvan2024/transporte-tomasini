@@ -44,12 +44,21 @@ function preview(
   source = calendar(),
   distance = 500,
 ) {
-  return evaluateKm100(source, {
-    departureAt: new Date(from),
-    arrivalAt: new Date(to),
+  const times = { departureAt: new Date(from), arrivalAt: new Date(to) };
+  const measured = evaluateKm100(source, {
+    ...times,
     startKm: 1000,
+    manualDistanceKm: null,
     endKm: 1000 + distance,
   });
+  const direct = evaluateKm100(source, {
+    ...times,
+    startKm: null,
+    endKm: null,
+    manualDistanceKm: distance,
+  });
+  assert.deepEqual(direct, measured);
+  return measured;
 }
 test("km al 100: límites exactos del sábado, domingo y lunes", () => {
   assert.equal(

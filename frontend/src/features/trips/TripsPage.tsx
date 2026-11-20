@@ -466,11 +466,19 @@ export function TripsPage({
                     </div>
                     <div>
                       <dt>Odómetro al salir</dt>
-                      <dd>{formatKm(detail.startKm)} km</dd>
+                      <dd>
+                        {detail.startKm === null
+                          ? "Sin informar"
+                          : `${formatKm(detail.startKm)} km`}
+                      </dd>
                     </div>
                     <div>
                       <dt>Odómetro al llegar</dt>
-                      <dd>{formatKm(detail.endKm)} km</dd>
+                      <dd>
+                        {detail.endKm === null
+                          ? "Sin informar"
+                          : `${formatKm(detail.endKm)} km`}
+                      </dd>
                     </div>
                     <div>
                       <dt>Controles</dt>

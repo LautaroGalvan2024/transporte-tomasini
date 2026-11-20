@@ -7,8 +7,9 @@ import writeXlsxFile, {
 import { BUSINESS_TIMEZONE } from "./config.js";
 import { ensure } from "./errors.js";
 import { parseKm100Context } from "./holiday-domain.js";
+import { tripDistance, type TripMileage } from "./trip-mileage.js";
 
-export interface MileageTrip {
+export interface MileageTrip extends TripMileage {
   driverId: string;
   truckId: string;
   driver: { cuil?: string | null; user: { name: string } };
@@ -17,8 +18,6 @@ export interface MileageTrip {
   arrivalAt: Date;
   origin: string;
   destination: string;
-  startKm: number;
-  endKm: number;
   controlCount: number | null;
   km100?: number | null;
   km100Context?: string | null;
@@ -156,7 +155,7 @@ function tripLine(trip: MileageTrip, slots: number, monthly: boolean) {
       { value: compact(trip.origin), type: String, wrap: true },
       ...dateAndTime(trip.arrivalAt),
       { value: compact(trip.destination), type: String, wrap: true },
-      { value: trip.endKm - trip.startKm, type: Number },
+      { value: tripDistance(trip), type: Number },
       {
         value:
           parseKm100Context(trip.km100Context ?? null)?.mode === "PENDING"

@@ -69,8 +69,9 @@ export interface Trip {
   destination: string;
   departureAt: string;
   arrivalAt: string;
-  startKm: number;
-  endKm: number;
+  mileageMode: "ODOMETER" | "DISTANCE";
+  startKm: number | null;
+  endKm: number | null;
   distanceKm: number;
   km100: number | null;
   km100Context: Km100Context | null;

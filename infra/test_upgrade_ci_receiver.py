@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import stat
 import subprocess
@@ -74,6 +75,74 @@ class ReceiverUpgradeTests(unittest.TestCase):
             upgrade.install(self.source, self.ops, self.expected)
         self.assertEqual(self.module_path.read_bytes(), b'unrelated')
         self.assertEqual(self.receiver_path.read_bytes(), self.old)
+
+    def test_additive_upgrade_introduces_rollback_guard_before_new_module(self):
+        old_receiver, old_module = b'# additive receiver\n', b'# additive module\n'
+        self.receiver_path.write_bytes(old_receiver)
+        self.module_path.write_bytes(old_module)
+        self.enterContext(patch.object(upgrade, 'ADDITIVE_RECEIVER_SHA', upgrade.digest(old_receiver)))
+        self.enterContext(patch.object(upgrade, 'ADDITIVE_MODULE_SHA', upgrade.digest(old_module)))
+        self.probe.side_effect = subprocess.SubprocessError()
+        with patch.object(upgrade.os, 'replace', wraps=upgrade.os.replace) as replace, self.assertRaises(subprocess.SubprocessError):
+            upgrade.install(self.source, self.ops, self.expected)
+        self.assertEqual([args.args[1] for args in replace.call_args_list], [
+            self.receiver_path, self.module_path, self.module_path, self.receiver_path])
+        self.assertEqual(self.receiver_path.read_bytes(), old_receiver)
+        self.assertEqual(self.module_path.read_bytes(), old_module)
+        self.probe.side_effect = None
+        self.receiver_path.write_bytes(self.new)  # Interrupted after the guard was installed.
+        upgrade.install(self.source, self.ops, self.expected)
+        self.assertEqual(self.module_path.read_bytes(), self.module)
+
+
+class CutoverHelperTests(unittest.TestCase):
+    def setUp(self):
+        scratch = self.enterContext(tempfile.TemporaryDirectory())
+        base = Path(scratch)
+        ops = base / 'ops/ci'
+        ops.mkdir(parents=True)
+        self.state = base / 'private/domain-cutover'
+        self.state.mkdir(parents=True)
+        self.original = self.state / 'core'
+        self.original.write_bytes(b'original reviewed core')
+        self.old = upgrade.digest(self.original.read_bytes())
+        self.core = ops / 'install_vps.py'
+        self.core.write_bytes(b'custom domain core')
+        self.new = upgrade.digest(self.core.read_bytes())
+        self.receipt = self.state / 'active.json'
+        self.data = {'hosts': upgrade.DOMAIN_HOSTS, 'coreSha256': self.new, 'time': 1}
+        self.receipt.write_text(json.dumps(self.data))
+        for attr, value in [('BASE', base), ('OPS', ops), ('PRE_DOMAIN_CORE_SHA', self.old), ('DOMAIN_CORE_SHA', self.new)]:
+            self.enterContext(patch.object(upgrade, attr, value))
+        self.protection = self.enterContext(patch.object(upgrade, 'protected'))
+
+    def test_accepts_original_or_receipted_cutover(self):
+        upgrade.verify_helper('install_vps.py', self.old)
+        self.assertEqual([item.args[0] for item in self.protection.call_args_list],
+                         [self.core, self.state, self.original, self.receipt])
+        self.assertTrue(self.protection.call_args_list[1].kwargs['is_directory'])
+        self.core.write_bytes(self.original.read_bytes())
+        self.receipt.unlink()
+        upgrade.verify_helper('install_vps.py', self.old)
+
+    def test_other_helpers_or_different_hashes_fail(self):
+        (self.core.parent / 'update_vps.py').write_bytes(self.core.read_bytes())
+        for name, expected in [('update_vps.py', self.old), ('install_vps.py', 'f' * 64)]:
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, 'CI helper changed'):
+                upgrade.verify_helper(name, expected)
+        self.core.write_bytes(b'unreviewed')
+        with self.assertRaisesRegex(RuntimeError, 'CI helper changed'):
+            upgrade.verify_helper('install_vps.py', self.old)
+
+    def test_requires_matching_receipt_and_preserved_original(self):
+        for key, bad in [('hosts', ['unrelated.example']), ('coreSha256', '0' * 64)]:
+            self.receipt.write_text(json.dumps({**self.data, key: bad}))
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, 'cutover evidence'):
+                upgrade.verify_helper('install_vps.py', self.old)
+        self.receipt.write_text(json.dumps(self.data))
+        self.original.write_bytes(b'different previous core')
+        with self.assertRaisesRegex(RuntimeError, 'cutover evidence'):
+            upgrade.verify_helper('install_vps.py', self.old)
 
 
 class TrustedFilesTests(unittest.TestCase):

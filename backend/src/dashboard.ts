@@ -11,6 +11,7 @@ import {
   tripDto,
 } from "./models.js";
 import { settingsBody } from "./validation.js";
+import { totalTripDistance } from "./trip-mileage.js";
 
 export function dashboardRouter() {
   const router = Router();
@@ -23,7 +24,12 @@ export function dashboardRouter() {
         getDb().trip.aggregate({
           where: { ...own, status: "ACTIVE", departureAt: { gte: monthStart } },
           _count: true,
-          _sum: { endKm: true, startKm: true, allowance: true },
+          _sum: {
+            endKm: true,
+            startKm: true,
+            manualDistanceKm: true,
+            allowance: true,
+          },
         }),
         getDb().trip.count({
           where: { ...own, status: "ACTIVE", reviewedAt: null },
@@ -40,11 +46,12 @@ export function dashboardRouter() {
       ]);
     const obligations = allObligations.filter((o) => o.active && o.ownerActive);
     const currentDriver =
-      drivers.find((driver) => driver.userId === user.id && driver.active) ?? null;
+      drivers.find((driver) => driver.userId === user.id && driver.active) ??
+      null;
     res.json({
       stats: {
         tripsThisMonth: sum._count,
-        kilometersThisMonth: (sum._sum.endKm ?? 0) - (sum._sum.startKm ?? 0),
+        kilometersThisMonth: totalTripDistance(sum._sum),
         pendingReviews,
         overdue: obligations.filter((o) => o.status === "OVERDUE").length,
         upcoming: obligations.filter((o) => o.status === "UPCOMING").length,

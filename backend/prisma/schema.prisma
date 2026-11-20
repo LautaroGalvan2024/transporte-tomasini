@@ -109,8 +109,9 @@ model Trip {
   destination     String     @db.VarChar(180)
   departureAt     DateTime   @db.Timestamptz(3)
   arrivalAt       DateTime   @db.Timestamptz(3)
-  startKm         Int
-  endKm           Int
+  startKm         Int?
+  endKm           Int?
+  manualDistanceKm Int?
   controlCount    Int?
   km100           Int?
   km100Context    String?

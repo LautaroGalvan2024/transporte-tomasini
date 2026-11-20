@@ -21,8 +21,11 @@ import { invitationsRouter, publicInvitationsRouter } from "./invitations.js";
 import { usersRouter } from "./users.js";
 import { trailersRouter } from "./trailers.js";
 import { holidayCalendarRouter } from "./holiday-calendar.js";
+import { MANUAL_DISTANCE_ENABLED } from "./manual-distance-enabled.js";
 
-export function createApp() {
+export function createApp({
+  manualDistanceEnabled = MANUAL_DISTANCE_ENABLED,
+}: { manualDistanceEnabled?: boolean } = {}) {
   const cfg = getConfig(),
     app = express();
   app.disable("x-powered-by");
@@ -73,7 +76,7 @@ export function createApp() {
   app.use("/api/trucks", trucksRouter());
   app.use("/api/trailers", trailersRouter());
   app.use("/api/drivers", driversRouter());
-  app.use("/api/trips", tripsRouter());
+  app.use("/api/trips", tripsRouter(manualDistanceEnabled));
   app.use("/api/holiday-calendar", holidayCalendarRouter());
   app.use("/api/obligations", obligationsRouter());
   app.use("/api", dashboardRouter());

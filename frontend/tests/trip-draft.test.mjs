@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  draftMileage,
   emptyValues,
   reuseTripAttempt,
   tripErrorSection,
@@ -216,4 +217,53 @@ test("el borrador distingue valores históricos nulos de ceros informados", () =
   assert.equal(reported.km100, "0");
   assert.equal(reported.controlCount, "0");
   assert.equal(reported.allowance, "0.00");
+});
+
+test("el viaje cargado por distancia conserva cero sin crear lecturas de odómetro", () => {
+  const stored = {
+    ...draft(),
+    mileageMode: "DISTANCE",
+    distanceKm: 0,
+    startKm: null,
+    endKm: null,
+  };
+  const values = tripToDraft(stored, (instant) => instant);
+  assert.equal(values.startKm, "");
+  assert.equal(values.endKm, "");
+  assert.equal(values.distanceKm, "0");
+  assert.deepEqual(draftMileage(values), { distance: 0, errors: {} });
+  for (const value of ["", " ", "-4", "7.5", "10000000"]) {
+    const { distance, errors } = draftMileage({ ...values, distanceKm: value });
+    assert.equal(distance, null);
+    assert.ok(errors.distanceKm);
+  }
+});
+
+test("preview y guardado envían únicamente los campos del método seleccionado", () => {
+  const values = draft({ distanceKm: "350", mileageMode: "DISTANCE" });
+  const preview = tripPreviewRequest(values, emptyValues());
+  assert.equal(preview.mileageMode, "DISTANCE");
+  assert.equal(preview.distanceKm, 350);
+  assert.ok(!("startKm" in preview));
+  assert.ok(!("endKm" in preview));
+  for (const mode of [
+    { kind: "create", clientRequestId: "new" },
+    { kind: "update", version: 2 },
+  ]) {
+    const body = tripFromDraft(values, context({ mode }));
+    assert.deepEqual(
+      Object.fromEntries(Object.keys(preview).map((key) => [key, body[key]])),
+      preview,
+    );
+    assert.ok(!("startKm" in body));
+    assert.ok(!("endKm" in body));
+  }
+  const normal = tripFromDraft(
+    { ...values, mileageMode: "ODOMETER" },
+    context(),
+  );
+  assert.equal(normal.startKm, 1000);
+  assert.equal(normal.endKm, 1100);
+  assert.ok(!("mileageMode" in normal));
+  assert.ok(!("distanceKm" in normal));
 });
