@@ -34,7 +34,7 @@ if (!$Interactive) {
 }
 
 try {
-  $Host.UI.RawUI.WindowTitle = 'Transporte Tomasini · Habilitar despliegues automáticos'
+  $Host.UI.RawUI.WindowTitle = "Tomasini · Actualizar receptor · $Attempt"
   if ((Get-Content -Raw -LiteralPath $state | ConvertFrom-Json).stage -ne 'prepared') { throw 'Este intento ya tiene estado. Revisalo antes de continuar.' }
   $hashes = Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json -AsHashtable
   if ($hashes.Count -ne $names.Count) { throw 'Manifiesto de archivos inválido.' }
@@ -74,8 +74,7 @@ cd /
 '@
   $command = $command.Replace('__SOURCE__',$remote).Replace('__INSTALLER__',$hashes['upgrade_ci_receiver.py']).Replace('__RECEIVER__',$hashes['ci_deploy.py']).Replace('__MODULE__',$hashes['ci_migrations.py']).Replace("`r`n","`n")
   Write-Host 'Se habilitará el receptor CI de Tomasini para las futuras migraciones automáticas desde GitHub.'
-  Write-Stage 'awaiting_local_enter'
-  [void](Read-Host 'Presioná Enter cuando estés listo para ingresar la contraseña de sudo de la VPS')
+  Write-Host 'Cuando aparezca el pedido de sudo, ingresá aquí la contraseña de la VPS.'
   Write-Stage 'awaiting_sudo_or_installing'
   & ssh @sshOptions -t $target $command
   if ($LASTEXITCODE -ne 0) { throw 'La VPS no confirmó la instalación. Revisá el resultado antes de reintentar.' }
