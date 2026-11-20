@@ -22,10 +22,15 @@ import { usersRouter } from "./users.js";
 import { trailersRouter } from "./trailers.js";
 import { holidayCalendarRouter } from "./holiday-calendar.js";
 import { MANUAL_DISTANCE_ENABLED } from "./manual-distance-enabled.js";
+import { OPERATIONAL_DISTANCE_ENABLED } from "./operational-distance-enabled.js";
 
 export function createApp({
   manualDistanceEnabled = MANUAL_DISTANCE_ENABLED,
-}: { manualDistanceEnabled?: boolean } = {}) {
+  operationalDistanceEnabled = OPERATIONAL_DISTANCE_ENABLED,
+}: {
+  manualDistanceEnabled?: boolean;
+  operationalDistanceEnabled?: boolean;
+} = {}) {
   const cfg = getConfig(),
     app = express();
   app.disable("x-powered-by");
@@ -76,7 +81,10 @@ export function createApp({
   app.use("/api/trucks", trucksRouter());
   app.use("/api/trailers", trailersRouter());
   app.use("/api/drivers", driversRouter());
-  app.use("/api/trips", tripsRouter(manualDistanceEnabled));
+  app.use(
+    "/api/trips",
+    tripsRouter(manualDistanceEnabled, operationalDistanceEnabled),
+  );
   app.use("/api/holiday-calendar", holidayCalendarRouter());
   app.use("/api/obligations", obligationsRouter());
   app.use("/api", dashboardRouter());
@@ -88,15 +96,19 @@ export function createApp({
   if (cfg.production) {
     const dir = fileURLToPath(new URL("../../frontend/dist/", import.meta.url));
     if (existsSync(dir)) {
-      app.use(express.static(dir, {
-        index: false,
-        maxAge: "1h",
-        setHeaders(response, path) {
-          if (["index.html", "frontend-version.json"].includes(basename(path))) {
-            response.setHeader("Cache-Control", "no-store");
-          }
-        },
-      }));
+      app.use(
+        express.static(dir, {
+          index: false,
+          maxAge: "1h",
+          setHeaders(response, path) {
+            if (
+              ["index.html", "frontend-version.json"].includes(basename(path))
+            ) {
+              response.setHeader("Cache-Control", "no-store");
+            }
+          },
+        }),
+      );
       app.get("/{*path}", (_req, res) => {
         res.setHeader("Cache-Control", "no-store");
         res.sendFile("index.html", { root: dir });

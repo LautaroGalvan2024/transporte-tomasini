@@ -112,6 +112,7 @@ model Trip {
   startKm         Int?
   endKm           Int?
   manualDistanceKm Int?
+  distanceSource   String?
   controlCount    Int?
   km100           Int?
   km100Context    String?

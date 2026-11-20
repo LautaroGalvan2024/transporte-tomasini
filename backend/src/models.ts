@@ -12,6 +12,7 @@ import {
   odometerAdjustments,
   ODOMETER_ADJUSTED,
   validateAdjustedHistory,
+  validateOperationalHistory,
 } from "./odometer.js";
 
 export const tripInclude = {
@@ -24,6 +25,7 @@ export function tripDto(row: TripRow) {
   return {
     id: row.id,
     driverId: row.driverId,
+    createdById: row.createdById,
     truckId: row.truckId,
     trailerId: row.trailerId,
     origin: row.origin,
@@ -33,6 +35,7 @@ export function tripDto(row: TripRow) {
     startKm: row.startKm,
     endKm: row.endKm,
     mileageMode: row.manualDistanceKm === null ? "ODOMETER" : "DISTANCE",
+    distanceSource: row.distanceSource,
     distanceKm: tripDistance(row),
     controlCount: row.controlCount,
     km100: row.km100,
@@ -55,7 +58,23 @@ export function tripDto(row: TripRow) {
   };
 }
 
-export async function truckDtos(db: Tx = getDb(), truckId?: string) {
+export function truckDtos(db: Tx = getDb(), truckId?: string) {
+  return readSnapshot(db, (tx) => readTrucks(tx, truckId));
+}
+
+// An existing transaction already provides a snapshot. Standalone read models
+// need one as well, so a service and its updated due km agree with the fleet.
+export function readSnapshot<T>(db: Tx, read: (tx: Tx) => Promise<T>) {
+  return db === getDb()
+    ? getDb().$transaction(read, {
+        isolationLevel: "RepeatableRead",
+        maxWait: 5_000,
+        timeout: 15_000,
+      })
+    : read(db);
+}
+
+async function readTrucks(db: Tx, truckId?: string) {
   const rows = await db.truck.findMany({
     where: truckId ? { id: truckId } : undefined,
     orderBy: { plate: "asc" },
@@ -92,7 +111,7 @@ export async function truckDtos(db: Tx = getDb(), truckId?: string) {
   for (const row of adjustments)
     if (!latestAdjustment.has(row.entityId))
       latestAdjustment.set(row.entityId, adjustmentReading(row.after));
-  return rows.map((row) => {
+  const trucks = rows.map((row) => {
     const readings = [
       ...(row.initialOdometer !== null && row.initialOdometerAt !== null
         ? [{ at: row.initialOdometerAt, km: row.initialOdometer }]
@@ -115,17 +134,55 @@ export async function truckDtos(db: Tx = getDb(), truckId?: string) {
       odometerAt: readings[0]?.at.toISOString() ?? null,
     };
   });
+  const anchors = trucks.flatMap((truck) =>
+    truck.odometerAt === null
+      ? []
+      : [
+          {
+            truckId: truck.id,
+            departureAt: { gte: truck.odometerAt },
+            arrivalAt: { gt: truck.odometerAt },
+          },
+        ],
+  );
+  // At departure the entire distance is still pending. At arrival the real
+  // reading already includes it, even for a trip with identical timestamps.
+  const totals = anchors.length
+    ? await db.trip.groupBy({
+        by: ["truckId"],
+        where: { status: "ACTIVE", distanceSource: { not: null }, OR: anchors },
+        _sum: { manualDistanceKm: true },
+        _max: { arrivalAt: true },
+      })
+    : [];
+  const totalsByTruck = new Map(totals.map((total) => [total.truckId, total]));
+  return trucks.map((truck) => {
+    const total = totalsByTruck.get(truck.id);
+    return {
+      ...truck,
+      maintenanceKm:
+        truck.odometer === null
+          ? null
+          : truck.odometer + (total?._sum.manualDistanceKm ?? 0),
+      maintenanceKmAt: total?._max.arrivalAt?.toISOString() ?? truck.odometerAt,
+      mileageEstimated: total !== undefined,
+    };
+  });
 }
 
-export async function driverDtos(user: AuthUser, db: Tx = getDb()) {
-  const [rows, trucks] = await Promise.all([
-    db.driver.findMany({
-      where: user.role === "DRIVER" ? { userId: user.id } : {},
-      include: { user: true },
-      orderBy: { user: { name: "asc" } },
-    }),
-    truckDtos(db),
-  ]);
+type Fleet = Awaited<ReturnType<typeof readTrucks>>;
+
+export function driverDtos(user: AuthUser, db: Tx = getDb(), fleet?: Fleet) {
+  return readSnapshot(db, (tx) => readDrivers(user, tx, fleet));
+}
+
+async function readDrivers(user: AuthUser, db: Tx, fleet?: Fleet) {
+  const rows = await db.driver.findMany({
+    where: user.role === "DRIVER" ? { userId: user.id } : {},
+    include: { user: true },
+    orderBy: { user: { name: "asc" } },
+  });
+  const trucks = fleet ?? (await readTrucks(db));
   const truckMap = new Map(trucks.map((t) => [t.id, t]));
   return rows.map((row) => ({
     id: row.id,
@@ -144,10 +201,20 @@ export async function driverDtos(user: AuthUser, db: Tx = getDb()) {
   }));
 }
 
-export async function obligationDtos(
+export function obligationDtos(
   user?: AuthUser,
   db: Tx = getDb(),
   now = new Date(),
+  fleet?: Fleet,
+) {
+  return readSnapshot(db, (tx) => readObligations(user, tx, now, fleet));
+}
+
+async function readObligations(
+  user: AuthUser | undefined,
+  db: Tx,
+  now: Date,
+  fleet?: Fleet,
 ) {
   const where: Prisma.ObligationWhereInput =
     user?.role === "DRIVER"
@@ -172,18 +239,16 @@ export async function obligationDtos(
           active: true,
         }
       : {};
-  const [rows, trucks, trailers] = await Promise.all([
-    db.obligation.findMany({
-      where,
-      include: {
-        driver: { include: { user: true } },
-        renewals: { orderBy: { performedAt: "desc" }, take: 1 },
-      },
-      orderBy: { title: "asc" },
-    }),
-    truckDtos(db),
-    trailerDtos(db),
-  ]);
+  const rows = await db.obligation.findMany({
+    where,
+    include: {
+      driver: { include: { user: true } },
+      renewals: { orderBy: { performedAt: "desc" }, take: 1 },
+    },
+    orderBy: { title: "asc" },
+  });
+  const trucks = fleet ?? (await readTrucks(db));
+  const trailers = await trailerDtos(db);
   const truckMap = new Map(trucks.map((t) => [t.id, t]));
   const trailerMap = new Map(trailers.map((t) => [t.id, t]));
   return rows.map((row) => {
@@ -212,7 +277,7 @@ export async function obligationDtos(
           ? trailer?.active === true
           : row.driver?.user.active === true,
       version: row.version,
-      ...calculateStatus(row, truck?.odometer ?? null, now),
+      ...calculateStatus(row, truck?.maintenanceKm ?? null, now),
       truck,
       trailer,
       driver: row.driver
@@ -229,7 +294,7 @@ export async function validateTruckHistory(
   truckId: string,
   candidate?: Pick<
     Trip,
-    "id" | "departureAt" | "arrivalAt" | "startKm" | "endKm"
+    "id" | "departureAt" | "arrivalAt" | "startKm" | "endKm" | "distanceSource"
   >,
   excludedTripId?: string,
   extraReading?: Reading,
@@ -262,8 +327,8 @@ export async function validateTruckHistory(
       "OVERLAPPING_TRIP",
     );
   }
-  // Every trip occupies its interval. Only measured trips participate in odometer history.
-  const measuredTrips = [...trips, ...(candidate ? [candidate] : [])].filter(
+  const history = [...trips, ...(candidate ? [candidate] : [])];
+  const measuredTrips = history.filter(
     (t) => t.startKm !== null && t.endKm !== null,
   );
   const readings: Reading[] = [
@@ -287,11 +352,12 @@ export async function validateTruckHistory(
     })),
     ...(extraReading ? [extraReading] : []),
   ];
-  validateAdjustedHistory(
-    readings,
-    await odometerAdjustments(tx, truckId),
-    measuredTrips,
+  const adjustments = await odometerAdjustments(tx, truckId);
+  validateOperationalHistory(
+    history.filter((t) => t.distanceSource !== null),
+    [...readings, ...adjustments],
   );
+  validateAdjustedHistory(readings, adjustments, measuredTrips);
   return truck;
 }
 

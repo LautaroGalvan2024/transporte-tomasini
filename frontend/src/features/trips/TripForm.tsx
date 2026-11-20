@@ -34,6 +34,8 @@ import { useData } from "../../useData";
 
 import {
   draftMileage,
+  createsOperationalDistance,
+  validKm,
   emptyValues,
   tripToDraft,
   reuseTripAttempt,
@@ -47,6 +49,7 @@ import {
 import { useKm100Preview } from "./useKm100Preview";
 import { Km100Summary } from "./TripSummary";
 import { manualDistanceEnabled } from "./manual-distance-enabled";
+import { operationalDistanceEnabled } from "./operational-distance-enabled";
 import { tripDetailPermissions } from "./trip-history";
 
 const previewFields = [
@@ -86,7 +89,9 @@ export function TripForm({
     refresh: refreshDrivers,
   } = useData<{ items: Driver[] }>("/drivers");
   const { data: recent } = useData<TripList>("/trips?pageSize=12");
-  const [values, setValues] = useState<TripFormValues>(emptyValues),
+  const [values, setValues] = useState<TripFormValues>(() =>
+      emptyValues(user.role),
+    ),
     [fields, setFields] = useState<Record<string, string>>({}),
     [error, setError] = useState(""),
     [loadError, setLoadError] = useState(""),
@@ -105,7 +110,7 @@ export function TripForm({
   const [savedTrip, setSavedTrip] = useState<Trip | null>(null);
   const [kmEditing, setKmEditing] = useState(false);
   const [resolveKm100, setResolveKm100] = useState(false);
-  const baseline = useRef<TripFormValues>(emptyValues());
+  const baseline = useRef<TripFormValues>(emptyValues(user.role));
   const initialized = useRef(false),
     requestId = useRef(crypto.randomUUID()),
     submitting = useRef(false),
@@ -125,6 +130,10 @@ export function TripForm({
     setValues((v) => ({
       ...v,
       [field]: value,
+      ...(field === "mileageMode" || field === "countForMaintenance"
+        ? { initialTruckOdometer: "" }
+        : {}),
+      ...(field === "mileageMode" ? { countForMaintenance: false } : {}),
       ...(invalidateKm ? { km100: "" } : {}),
     }));
     setFields((f) => ({
@@ -142,10 +151,16 @@ export function TripForm({
     setValues((v) => ({
       ...v,
       truckId,
+      ...(truckId !== v.truckId ? { initialTruckOdometer: "" } : {}),
       ...(!tripId ? { trailerId: suggestedTrailer(truckId) } : {}),
     }));
     if (!tripId) setTrailerConfirmed(false);
-    setFields((f) => ({ ...f, truckId: "", trailerId: "" }));
+    setFields((f) => ({
+      ...f,
+      truckId: "",
+      trailerId: "",
+      initialTruckOdometer: "",
+    }));
   };
   useEffect(() => {
     if (!tripId) return;
@@ -210,6 +225,13 @@ export function TripForm({
   }, [changed, success]);
   const truck = trucks?.items.find((t) => t.id === values.truckId);
   const directDistance = values.mileageMode === "DISTANCE";
+  const operationalDistance =
+    directDistance &&
+    (tripId
+      ? Boolean(savedTrip?.distanceSource)
+      : createsOperationalDistance(values, user.role));
+  const needsInitialOdometer =
+    !tripId && operationalDistance && truck?.odometer === null;
   const { distance: km, errors: mileageErrors } = draftMileage(values);
   const legacyKm100 = Boolean(tripId && savedTrip && !savedTrip.km100Context);
   const kmInputsChanged = previewFields.some(
@@ -266,6 +288,13 @@ export function TripForm({
     e.preventDefault();
     if (submitting.current) return;
     const invalid: Record<string, string> = { ...mileageErrors };
+    if (
+      !pendingBody &&
+      needsInitialOdometer &&
+      !validKm(values.initialTruckOdometer)
+    )
+      invalid.initialTruckOdometer =
+        "Ingresá una lectura inicial entre 0 y 9.999.999 km.";
     if (!values.truckId) invalid.truckId = "Elegí el camión de este viaje.";
     if (!trailerConfirmed)
       invalid.trailerId = "Confirmá el acoplado usado o elegí Sin acoplado.";
@@ -325,6 +354,7 @@ export function TripForm({
           baseline: baseline.current,
           savedTrip,
           role: user.role,
+          truckOdometer: truck?.odometer,
           evaluateKm,
           preview: currentPreview,
           resolveKm100,
@@ -342,11 +372,20 @@ export function TripForm({
       setPendingBody(null);
       setConflict(false);
       setSuccess(result);
+      refreshTrucks();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       const err = e as ApiError;
       const failure = tripSaveFailure(err);
       if (failure.clearPending) setPendingBody(null);
+      if (
+        err.code === "INITIAL_ODOMETER_CONFLICT" ||
+        err.code === "INITIAL_ODOMETER_REQUIRED"
+      ) {
+        refreshTrucks();
+        setView("trip");
+        setValues((v) => ({ ...v, initialTruckOdometer: "" }));
+      }
       setConflict(failure.conflict);
       if (failure.refreshPreview) {
         invalidateKmPreview(false);
@@ -354,7 +393,7 @@ export function TripForm({
         setValues((v) => ({ ...v, km100: "" }));
       }
       setError(failure.message);
-      if (err.fields) {
+      if (Object.keys(err.fields || {}).length) {
         const section = tripErrorSection(err.fields);
         setView(section);
         if (section === "extras") setExtra(true);
@@ -383,7 +422,7 @@ export function TripForm({
     return <Loading label="Preparando la carga…" />;
   }
   if (loadError) return <ErrorState message={loadError} onRetry={onCancel} />;
-  if (savedTrip && !tripDetailPermissions(savedTrip, user.role).canEdit)
+  if (savedTrip && !tripDetailPermissions(savedTrip, user).canEdit)
     return (
       <div className="workspace-page">
         <p>Este viaje está disponible para consulta.</p>
@@ -433,7 +472,7 @@ export function TripForm({
             requestId.current = crypto.randomUUID();
             setValues((v) => {
               const initial = {
-                ...emptyValues(),
+                ...emptyValues(user.role),
                 driverId: v.driverId,
                 truckId: v.truckId,
                 trailerId: suggestedTrailer(v.truckId),
@@ -644,26 +683,106 @@ export function TripForm({
           </section>
           <section className="trip-km-block">
             <h2>Kilómetros y controles</h2>
-            {user.role === "ADMIN" && !tripId && manualDistanceEnabled && (
-              <Field label="Cómo cargar los kilómetros">
-                <select
-                  aria-label="Cómo cargar los kilómetros"
-                  value={values.mileageMode}
-                  onChange={(e) =>
-                    set(
-                      "mileageMode",
-                      e.target.value === "DISTANCE" ? "DISTANCE" : "ODOMETER",
-                    )
-                  }
-                  disabled={blocked}
-                >
-                  <option value="ODOMETER">Con odómetros</option>
-                  <option value="DISTANCE">Solo kilómetros recorridos</option>
-                </select>
+            {!tripId &&
+              (user.role === "ADMIN"
+                ? manualDistanceEnabled
+                : operationalDistanceEnabled) && (
+                <Field label="Cómo cargar los kilómetros">
+                  <select
+                    aria-label="Cómo cargar los kilómetros"
+                    value={values.mileageMode}
+                    onChange={(e) =>
+                      set(
+                        "mileageMode",
+                        e.target.value === "DISTANCE" ? "DISTANCE" : "ODOMETER",
+                      )
+                    }
+                    disabled={blocked}
+                  >
+                    <option value="ODOMETER">Con odómetros</option>
+                    <option value="DISTANCE">Solo kilómetros recorridos</option>
+                  </select>
+                </Field>
+              )}
+            {directDistance &&
+              user.role === "ADMIN" &&
+              !tripId &&
+              operationalDistanceEnabled && (
+                <label className="trip-maintenance-check">
+                  <input
+                    type="checkbox"
+                    checked={values.countForMaintenance}
+                    onChange={(e) =>
+                      set("countForMaintenance", e.target.checked)
+                    }
+                    disabled={blocked}
+                  />
+                  Sumar al kilometraje del camión
+                </label>
+              )}
+            {truck &&
+              (!directDistance ||
+                (operationalDistance && truck.odometer !== null)) && (
+                <div className="odometer-reference">
+                  <Info size={18} />
+                  <span>
+                    {truck.odometer === null ? (
+                      <>
+                        <strong>Kilometraje pendiente</strong>
+                        <small>
+                          Ingresá la lectura real al salir y al llegar.
+                        </small>
+                      </>
+                    ) : (
+                      <>
+                        Última lectura real:{" "}
+                        <strong>{formatKm(truck.odometer)} km</strong>
+                        <small>{formatDate(truck.odometerAt)}</small>
+                        {truck.mileageEstimated &&
+                          truck.maintenanceKm !== null && (
+                            <small>
+                              Estimado para vencimientos:{" "}
+                              <strong>
+                                {formatKm(truck.maintenanceKm)} km
+                              </strong>{" "}
+                              · {formatDate(truck.maintenanceKmAt)}
+                            </small>
+                          )}
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+            {needsInitialOdometer && (
+              <Field
+                label="Primera lectura del odómetro"
+                error={fields.initialTruckOdometer}
+                hint="Ingresá la lectura real al salir. Se usa como base para los vencimientos de este camión."
+              >
+                <span className="input-suffix">
+                  <input
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={values.initialTruckOdometer}
+                    onChange={(e) =>
+                      set("initialTruckOdometer", e.target.value)
+                    }
+                    disabled={blocked}
+                  />
+                  <span>km</span>
+                </span>
               </Field>
             )}
             {directDistance ? (
-              <Field label="Kilómetros recorridos" error={fields.distanceKm}>
+              <Field
+                label="Kilómetros recorridos"
+                error={fields.distanceKm}
+                hint={
+                  operationalDistance
+                    ? "Estos kilómetros cuentan para los vencimientos del camión."
+                    : undefined
+                }
+              >
                 <span className="input-suffix">
                   <input
                     inputMode="numeric"
@@ -678,27 +797,6 @@ export function TripForm({
               </Field>
             ) : (
               <>
-                {truck && (
-                  <div className="odometer-reference">
-                    <Info size={18} />
-                    <span>
-                      {truck.odometer === null ? (
-                        <>
-                          <strong>Kilometraje pendiente</strong>
-                          <small>
-                            Ingresá la lectura real al salir y al llegar.
-                          </small>
-                        </>
-                      ) : (
-                        <>
-                          Última lectura:{" "}
-                          <strong>{formatKm(truck.odometer)} km</strong>
-                          <small>{formatDate(truck.odometerAt)}</small>
-                        </>
-                      )}
-                    </span>
-                  </div>
-                )}
                 <div className="grid2">
                   <Field label="Odómetro al salir" error={fields.startKm}>
                     <span className="input-suffix">

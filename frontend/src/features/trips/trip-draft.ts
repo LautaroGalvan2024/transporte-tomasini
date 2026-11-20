@@ -1,5 +1,6 @@
 import type { Km100Preview, Role, Trip } from "../../types.ts";
 import { tripDateForRequest } from "../../trip-date.ts";
+import { operationalDistanceEnabled } from "./operational-distance-enabled.ts";
 
 export type TripFormValues = {
   truckId: string;
@@ -10,6 +11,8 @@ export type TripFormValues = {
   departureAt: string;
   arrivalAt: string;
   mileageMode: Trip["mileageMode"];
+  countForMaintenance: boolean;
+  initialTruckOdometer: string;
   distanceKm: string;
   startKm: string;
   endKm: string;
@@ -18,7 +21,7 @@ export type TripFormValues = {
   allowance: string;
   notes: string;
 };
-export const emptyValues = (): TripFormValues => ({
+export const emptyValues = (role?: Role): TripFormValues => ({
   truckId: "",
   trailerId: "",
   driverId: "",
@@ -26,7 +29,10 @@ export const emptyValues = (): TripFormValues => ({
   destination: "",
   departureAt: "",
   arrivalAt: "",
-  mileageMode: "ODOMETER",
+  mileageMode:
+    role === "DRIVER" && operationalDistanceEnabled ? "DISTANCE" : "ODOMETER",
+  countForMaintenance: false,
+  initialTruckOdometer: "",
   distanceKm: "",
   startKm: "",
   endKm: "",
@@ -36,10 +42,19 @@ export const emptyValues = (): TripFormValues => ({
   notes: "",
 });
 
+export const validKm = (value: string) =>
+  /^\d+$/.test(value) && Number(value) <= 9_999_999;
+
+export function createsOperationalDistance(values: TripFormValues, role: Role) {
+  return (
+    operationalDistanceEnabled &&
+    values.mileageMode === "DISTANCE" &&
+    (role === "DRIVER" || values.countForMaintenance)
+  );
+}
+
 export function draftMileage(values: TripFormValues) {
   const errors: Record<string, string> = {};
-  const validKm = (value: string) =>
-    /^\d+$/.test(value) && Number(value) <= 9_999_999;
   if (values.mileageMode === "DISTANCE") {
     if (!validKm(values.distanceKm))
       errors.distanceKm =
@@ -73,6 +88,8 @@ export function tripToDraft(
     departureAt: localInput(trip.departureAt),
     arrivalAt: localInput(trip.arrivalAt),
     mileageMode: trip.mileageMode,
+    countForMaintenance: Boolean(trip.distanceSource),
+    initialTruckOdometer: "",
     distanceKm: trip.mileageMode === "DISTANCE" ? String(trip.distanceKm) : "",
     startKm: trip.startKm?.toString() ?? "",
     endKm: trip.endKm?.toString() ?? "",
@@ -104,7 +121,12 @@ type TripRequestFields = MileageInput & {
 };
 
 export type CreateTripRequest = Readonly<
-  TripRequestFields & { clientRequestId: string; version?: never }
+  TripRequestFields & {
+    clientRequestId: string;
+    version?: never;
+    countForMaintenance?: true;
+    initialTruckOdometer?: number;
+  }
 >;
 export type UpdateTripRequest = Readonly<
   TripRequestFields & { version: number; clientRequestId?: never }
@@ -150,6 +172,7 @@ export function tripFromDraft(
     baseline: TripFormValues;
     savedTrip: StoredTripDates | null;
     role: Role;
+    truckOdometer: number | null | undefined;
     evaluateKm: boolean;
     preview: Km100Preview | null;
     resolveKm100: boolean;
@@ -181,6 +204,15 @@ export function tripFromDraft(
   return context.mode.kind === "create"
     ? Object.freeze({
         ...fields,
+        ...(createsOperationalDistance(values, context.role) &&
+        context.role === "ADMIN"
+          ? { countForMaintenance: true as const }
+          : {}),
+        ...(createsOperationalDistance(values, context.role) &&
+        context.truckOdometer === null &&
+        validKm(values.initialTruckOdometer)
+          ? { initialTruckOdometer: Number(values.initialTruckOdometer) }
+          : {}),
         clientRequestId: context.mode.clientRequestId,
       })
     : Object.freeze({ ...fields, version: context.mode.version });

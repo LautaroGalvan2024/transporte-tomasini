@@ -71,7 +71,11 @@ export const tripFields = z
     notes,
   })
   .strict();
-export const tripCreate = tripFields.extend({ clientRequestId: uuid });
+export const tripCreate = tripFields.extend({
+  clientRequestId: uuid,
+  countForMaintenance: z.boolean().optional(),
+  initialTruckOdometer: km.optional(),
+});
 export const tripUpdate = tripFields.partial().extend({
   version: z.number().int().positive(),
   clientRequestId: uuid.optional(),

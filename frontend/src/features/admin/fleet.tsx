@@ -12,12 +12,8 @@ import { api, send, ApiError } from "../../api";
 import type { Driver, PageProps, Truck } from "../../types";
 import { EmptyState, Field, Modal, formatDate, formatKm } from "../../ui";
 import { TrailersPanel } from "../../pages/Trailers";
-import {
-  dateTimeInput,
-  businessInstant,
-  optionalNumber,
-  dateLabel,
-} from "./formatting";
+import { lastReadingLabel, maintenanceMileageLabel } from "../truck-mileage";
+import { dateTimeInput, businessInstant, optionalNumber } from "./formatting";
 import {
   useLoad,
   PageHeading,
@@ -156,7 +152,9 @@ function OdometerForm({
   onSaved: (updated: Truck) => void;
 }) {
   const [reference, setReference] = useState(truck);
-  const [odometer, setOdometer] = useState(truck.odometer?.toString() ?? "");
+  const [odometer, setOdometer] = useState(
+    truck.mileageEstimated ? "" : (truck.odometer?.toString() ?? ""),
+  );
   const [conflict, setConflict] = useState(false);
   const [refreshed, setRefreshed] = useState(false);
   const form = useFormStatus();
@@ -172,6 +170,8 @@ function OdometerForm({
           odometer: Number(odometer),
           expectedOdometer: reference.odometer,
           expectedOdometerAt: reference.odometerAt,
+          expectedMaintenanceKm: reference.maintenanceKm,
+          expectedMaintenanceKmAt: reference.maintenanceKmAt,
         },
       );
       onSaved(updated);
@@ -221,15 +221,24 @@ function OdometerForm({
         </div>
         <div className="admin-odometer-reference">
           <span>
-            Odómetro actual{" "}
+            Última lectura real{" "}
             <strong>
               {reference.odometer === null
                 ? "Sin informar"
                 : `${formatKm(reference.odometer)} km`}
             </strong>
+            {reference.odometerAt && (
+              <small>{formatDate(reference.odometerAt)}</small>
+            )}
           </span>
-          {reference.odometerAt && (
-            <small>Lectura del {formatDate(reference.odometerAt)}</small>
+          {reference.mileageEstimated && reference.maintenanceKm != null && (
+            <span>
+              Estimado para vencimientos
+              <strong>{formatKm(reference.maintenanceKm)} km</strong>
+              {reference.maintenanceKmAt && (
+                <small>{formatDate(reference.maintenanceKmAt)}</small>
+              )}
+            </span>
           )}
         </div>
         <Field
@@ -288,7 +297,8 @@ function OdometerForm({
               conflict ||
               !reference.active ||
               odometer.trim() === "" ||
-              Number(odometer) === reference.odometer
+              (!reference.mileageEstimated &&
+                Number(odometer) === reference.odometer)
             }
           >
             {form.busy ? "Guardando…" : "Guardar kilometraje"}
@@ -449,7 +459,7 @@ export function FleetPage({ onNotify }: PageProps) {
               <div className="admin-list-header admin-fleet-row">
                 <span>Camión</span>
                 <span>Chofer habitual</span>
-                <span>Odómetro</span>
+                <span>Kilometraje</span>
                 <span>Estado</span>
                 <span>Acciones</span>
               </div>
@@ -481,13 +491,9 @@ export function FleetPage({ onNotify }: PageProps) {
                         "Sin asignar"}
                     </div>
                     <div className="admin-row-value">
-                      <strong>
-                        {truck.odometer === null
-                          ? "Sin informar"
-                          : `${formatKm(truck.odometer)} km`}
-                      </strong>
+                      <strong>{maintenanceMileageLabel(truck)}</strong>
                       {truck.odometerAt && (
-                        <small>{dateLabel(truck.odometerAt)}</small>
+                        <small>{lastReadingLabel(truck)}</small>
                       )}
                     </div>
                     <span

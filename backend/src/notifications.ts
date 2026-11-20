@@ -116,6 +116,10 @@ export async function runNotificationJob(
       dueKm: o.dueKm,
       daysRemaining: o.daysRemaining,
       kmRemaining: o.kmRemaining,
+      maintenanceKm: o.truck?.maintenanceKm,
+      maintenanceKmAt: o.truck?.maintenanceKmAt,
+      mileageEstimated: o.truck?.mileageEstimated,
+      odometer: o.truck?.odometer,
       odometerAt: o.truck?.odometerAt,
     })),
   });

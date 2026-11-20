@@ -8,7 +8,12 @@ type Alert = Pick<
 > & {
   truck: Pick<
     NonNullable<Obligation["truck"]>,
-    "plate" | "odometer" | "odometerAt"
+    | "plate"
+    | "odometer"
+    | "odometerAt"
+    | "maintenanceKm"
+    | "maintenanceKmAt"
+    | "mileageEstimated"
   > | null;
   trailer: Pick<NonNullable<Obligation["trailer"]>, "plate"> | null;
   driver: Pick<NonNullable<Obligation["driver"]>, "name"> | null;
@@ -74,10 +79,21 @@ function describeAlert(alert: Alert) {
     details.push(
       "Límite: " + km(dueKm) + (balance ? " (" + balance + ")" : ""),
     );
+    if (
+      truck?.mileageEstimated &&
+      truck.maintenanceKm !== null &&
+      truck.maintenanceKmAt
+    )
+      details.push(
+        "Kilometraje estimado para mantenimiento: " +
+          km(truck.maintenanceKm) +
+          " · " +
+          formatDate(businessDay(new Date(truck.maintenanceKmAt))),
+      );
     if (truck)
       details.push(
         truck.odometer !== null && truck.odometerAt
-          ? "Última lectura: " +
+          ? "Última lectura real: " +
               km(truck.odometer) +
               " · " +
               formatDate(businessDay(new Date(truck.odometerAt)))

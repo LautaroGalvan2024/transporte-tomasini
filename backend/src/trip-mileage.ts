@@ -30,19 +30,19 @@ type MileageInput = {
 
 export function writeMileage(
   input: MileageInput,
-  admin: boolean,
+  canWriteDistance: boolean,
   old?: TripMileage,
 ): TripMileage {
   const storedMode =
     old && (old.manualDistanceKm === null ? "ODOMETER" : "DISTANCE");
   const mode = input.mileageMode ?? storedMode ?? "ODOMETER";
   ensure(
-    admin ||
+    canWriteDistance ||
       (mode !== "DISTANCE" &&
         storedMode !== "DISTANCE" &&
         input.distanceKm === undefined),
     403,
-    "Solo administración puede cargar o corregir viajes con kilómetros directos.",
+    "No tenés permiso para cargar o corregir este viaje con kilómetros directos.",
   );
   ensure(
     !storedMode || mode === storedMode,

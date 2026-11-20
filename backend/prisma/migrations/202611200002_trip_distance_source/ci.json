@@ -1,0 +1,1 @@
+{"version":1,"operations":[{"op":"addNullableColumn","table":"Trip","column":"distanceSource","type":"String"}]}

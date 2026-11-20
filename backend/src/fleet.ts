@@ -11,7 +11,13 @@ import {
   password,
   uuid,
 } from "./validation.js";
-import { truckDtos, driverDtos, audit, activeTruck } from "./models.js";
+import {
+  truckDtos,
+  driverDtos,
+  audit,
+  activeTruck,
+  validateTruckHistory,
+} from "./models.js";
 import { hashPassword } from "./password.js";
 import { revokeDriverInvitations } from "./invitations.js";
 import { assertAdminAccess, lockAccessChanges } from "./access-control.js";
@@ -162,7 +168,20 @@ export function trucksRouter() {
         "El odómetro cambió desde que lo abriste. Actualizá la lectura y revisá tu corrección.",
         "ODOMETER_VERSION_CONFLICT",
       );
-      if (current.odometer === input.odometer) return current;
+      if (current.mileageEstimated || input.expectedMaintenanceKm !== undefined)
+        ensure(
+          current.maintenanceKm === input.expectedMaintenanceKm &&
+            (current.maintenanceKmAt === null
+              ? input.expectedMaintenanceKmAt === null
+              : input.expectedMaintenanceKmAt != null &&
+                Date.parse(current.maintenanceKmAt) ===
+                  Date.parse(input.expectedMaintenanceKmAt)),
+          409,
+          "El kilometraje de mantenimiento cambió. Actualizá el camión y revisá la lectura.",
+          "ODOMETER_VERSION_CONFLICT",
+        );
+      if (current.odometer === input.odometer && !current.mileageEstimated)
+        return current;
       const now = Date.now();
       if (current.odometer === null) {
         const at = new Date(now);
@@ -173,6 +192,7 @@ export function trucksRouter() {
             initialOdometerAt: at,
           },
         });
+        await validateTruckHistory(tx, id);
         await audit(
           tx,
           actor.id,
@@ -219,6 +239,7 @@ export function trucksRouter() {
           },
         },
       });
+      await validateTruckHistory(tx, id);
       return (await truckDtos(tx, id))[0];
     });
     res.json(result);

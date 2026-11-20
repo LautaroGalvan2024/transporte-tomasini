@@ -80,8 +80,14 @@ test(
       );
       return client;
     };
-    const stageA = createApp({ manualDistanceEnabled: false });
-    const stageB = createApp({ manualDistanceEnabled: true });
+    const stageA = createApp({
+      manualDistanceEnabled: false,
+      operationalDistanceEnabled: false,
+    });
+    const stageB = createApp({
+      manualDistanceEnabled: true,
+      operationalDistanceEnabled: false,
+    });
     // Keep all report fixtures in one Argentine month, including runs near midnight.
     const now = Date.now();
     const monthStart = dayStart(

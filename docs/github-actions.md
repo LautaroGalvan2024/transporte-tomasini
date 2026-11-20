@@ -95,6 +95,8 @@ La operación revisada `enableTripManualDistance` corresponde exclusivamente a `
 
 El primer PR publica los lectores y conserva la creación por odómetro. Confirmar el commit de este primer despliegue en el recibo de la VPS y en el sitio público antes de integrar el segundo PR que habilita la carga administrativa. Cada despliegue conserva su propio respaldo y recibo.
 
+La ampliación al chofer sigue la misma secuencia. `202611200002_trip_distance_source` usa la operación revisada `addNullableColumn` para agregar `Trip.distanceSource`, sin reescribir viajes anteriores. La primera entrega instala la columna y los lectores de kilometraje para mantenimiento. Conserva habilitada la carga histórica administrativa. Una vez verificado ese commit en la VPS y en el sitio, la segunda habilita la carga operativa en API y formulario. Un retorno a la primera entrega conserva la lectura de los registros creados por la segunda.
+
 Si falla la primera activación, el receptor pausa las escrituras de Tomasini y comprueba con el rol de aplicación que todos los viajes tienen dos lecturas antes de restituir la versión anterior. Si hay un viaje con odómetros ausentes, conserva la versión compatible para recuperar hacia adelante. Esta comprobación también se aplica cuando una migración quedó confirmada en un intento anterior. Si falla la segunda activación, el primer release ya puede leer y exportar los viajes guardados.
 
 ## Operación del calendario de feriados

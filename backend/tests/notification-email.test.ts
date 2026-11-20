@@ -21,8 +21,11 @@ test("el resumen HTML conserva los límites por fecha y km, escapa datos y enlaz
         status: "OVERDUE",
         truck: {
           plate: "PRUEBA",
-          odometer: 150120,
-          odometerAt: "2026-11-18T01:00:00Z",
+          odometer: 149900,
+          odometerAt: "2026-11-17T01:00:00Z",
+          maintenanceKm: 150120,
+          maintenanceKmAt: "2026-11-18T01:00:00Z",
+          mileageEstimated: true,
         },
         driver: null,
         trailer: null,
@@ -40,7 +43,14 @@ test("el resumen HTML conserva los límites por fecha y km, escapa datos y enlaz
     assert.match(version, /18 de noviembre de 2026 \(vence hoy\)/);
     assert.match(version, /19 de noviembre de 2026 \(en 1 día\)/);
     assert.match(version, /150\.000 km \(120 km excedidos\)/);
-    assert.match(version, /150\.120 km · 17 de noviembre de 2026/);
+    assert.match(
+      version,
+      /Kilometraje estimado para mantenimiento: 150\.120 km · 17 de noviembre de 2026/,
+    );
+    assert.match(
+      version,
+      /Última lectura real: 149\.900 km · 16 de noviembre de 2026/,
+    );
     assert.match(version, /https:\/\/transporte-tomasini\.com\/obligations/);
   }
   assert.ok(
