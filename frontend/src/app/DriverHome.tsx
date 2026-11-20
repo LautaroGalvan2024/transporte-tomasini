@@ -16,6 +16,11 @@ import {
   StatusBadge,
 } from "../ui";
 import { useData } from "../useData";
+import {
+  lastReadingLabel,
+  maintenanceMileageLabel,
+  remainingMileageLabel,
+} from "../features/truck-mileage";
 
 export function DriverHome(props: PageProps) {
   const { data, error, loading, refresh } = useData<Dashboard>("/dashboard");
@@ -47,14 +52,8 @@ export function DriverHome(props: PageProps) {
               <span>{truck.label}</span>
             </div>
             <div className="vehicle-reading">
-              <strong>
-                {truck.odometer === null
-                  ? "Sin informar"
-                  : `${formatKm(truck.odometer)} km`}
-              </strong>
-              {truck.odometerAt && (
-                <span>Última lectura · {formatDate(truck.odometerAt)}</span>
-              )}
+              <strong>{maintenanceMileageLabel(truck)}</strong>
+              {truck.odometerAt && <span>{lastReadingLabel(truck)}</span>}
             </div>
           </>
         ) : (
@@ -138,6 +137,9 @@ export function DriverHome(props: PageProps) {
                 <strong>{o.title}</strong>
                 {o.trailer && <small>Acoplado · {o.trailer.plate}</small>}
                 {o.odometerMissing && <small>Falta informar kilometraje</small>}
+                {o.kmRemaining != null && o.truck?.mileageEstimated && (
+                  <small>{remainingMileageLabel(o.kmRemaining, true)}</small>
+                )}
                 <span>
                   {o.dueDate
                     ? formatDate(o.dueDate)

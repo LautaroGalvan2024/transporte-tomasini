@@ -1371,7 +1371,7 @@
   color: #214462;
   font-size: 17px;
 }
-.admin-odometer-reference small {
+.admin-odometer-reference > span + span {
   text-align: right;
 }
 .admin-page .admin-user-row {

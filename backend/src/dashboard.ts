@@ -9,6 +9,7 @@ import {
   obligationDtos,
   tripInclude,
   tripDto,
+  readSnapshot,
 } from "./models.js";
 import { settingsBody } from "./validation.js";
 import { totalTripDistance } from "./trip-mileage.js";
@@ -17,11 +18,12 @@ export function dashboardRouter() {
   const router = Router();
   router.get("/dashboard", async (req, res) => {
     const user = currentUser(req),
-      monthStart = dayStart(`${businessDay().slice(0, 7)}-01`);
+      now = new Date(),
+      monthStart = dayStart(`${businessDay(now).slice(0, 7)}-01`);
     const own = user.role === "DRIVER" ? { driverId: user.driver!.id } : {};
-    const [sum, pendingReviews, recent, allObligations, trucks, drivers] =
-      await Promise.all([
-        getDb().trip.aggregate({
+    const { sum, pendingReviews, recent, allObligations, trucks, drivers } =
+      await readSnapshot(getDb(), async (tx) => {
+        const sum = await tx.trip.aggregate({
           where: { ...own, status: "ACTIVE", departureAt: { gte: monthStart } },
           _count: true,
           _sum: {
@@ -30,20 +32,21 @@ export function dashboardRouter() {
             manualDistanceKm: true,
             allowance: true,
           },
-        }),
-        getDb().trip.count({
+        });
+        const pendingReviews = await tx.trip.count({
           where: { ...own, status: "ACTIVE", reviewedAt: null },
-        }),
-        getDb().trip.findMany({
+        });
+        const recent = await tx.trip.findMany({
           where: { ...own, status: "ACTIVE" },
           include: tripInclude,
           orderBy: { departureAt: "desc" },
           take: 5,
-        }),
-        obligationDtos(user),
-        truckDtos(),
-        driverDtos(user),
-      ]);
+        });
+        const trucks = await truckDtos(tx);
+        const allObligations = await obligationDtos(user, tx, now, trucks);
+        const drivers = await driverDtos(user, tx, trucks);
+        return { sum, pendingReviews, recent, allObligations, trucks, drivers };
+      });
     const obligations = allObligations.filter((o) => o.active && o.ownerActive);
     const currentDriver =
       drivers.find((driver) => driver.userId === user.id && driver.active) ??

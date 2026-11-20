@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { maintenanceMileageLabel } from "../truck-mileage";
 import {
   ArrowRight,
   ChevronRight,
@@ -228,13 +229,9 @@ export function AdminDashboard({ onNavigate }: PageProps) {
                       <small>{truck.label}</small>
                     </span>
                     <span className="admin-row-date">
-                      {dateLabel(truck.odometerAt)}
+                      {dateLabel(truck.maintenanceKmAt ?? truck.odometerAt)}
                     </span>
-                    <strong>
-                      {truck.odometer === null
-                        ? "Sin informar"
-                        : `${formatKm(truck.odometer)} km`}
-                    </strong>
+                    <strong>{maintenanceMileageLabel(truck)}</strong>
                     <ChevronRight size={17} />
                   </button>
                 ))}

@@ -202,6 +202,22 @@
 .compact-trip-form .odometer-reference {
   margin: 0 0 22px;
 }
+.trip-km-block .trip-maintenance-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #173854;
+  font-size: 14px;
+  cursor: pointer;
+}
+.trip-km-block .trip-maintenance-check input {
+  flex: 0 0 18px;
+  width: 18px;
+  min-height: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #173854;
+}
 .trip-mobile-extra-toggle {
   border-top: 1px solid var(--line);
   padding: 14px 0;

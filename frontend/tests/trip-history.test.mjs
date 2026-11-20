@@ -6,6 +6,36 @@ import {
   tripDetailPermissions,
 } from "../src/features/trips/trip-history.ts";
 import { tripRowPresentation } from "../src/features/trips/trip-presentation.ts";
+import { operationalDistanceEnabled } from "../src/features/trips/operational-distance-enabled.ts";
+
+test("solo el autor asignado edita su distancia operativa antes de la revisión", () => {
+  const trip = {
+    mileageMode: "DISTANCE",
+    distanceSource: "DRIVER",
+    status: "ACTIVE",
+    createdById: "autor",
+    driverId: "chofer",
+    reviewedAt: null,
+  };
+  const actor = { role: "DRIVER", id: "autor", driverId: "chofer" };
+  assert.equal(
+    tripDetailPermissions(trip, actor).canEdit,
+    operationalDistanceEnabled,
+  );
+  for (const change of [
+    { driverId: "otro" },
+    { createdById: "otro" },
+    { distanceSource: "ADMIN" },
+    { distanceSource: null },
+    { reviewedAt: "2026-10-25" },
+    { status: "CANCELLED" },
+  ]) {
+    assert.equal(
+      tripDetailPermissions({ ...trip, ...change }, actor).canEdit,
+      false,
+    );
+  }
+});
 
 test("la paginación conserva texto, espacios, saltos y pares Unicode completos", () => {
   for (const value of [
@@ -85,7 +115,7 @@ test("las acciones conservan la matriz de rol, revisión y anulación", () => {
   for (const role of ["ADMIN", "DRIVER"]) {
     for (const status of ["ACTIVE", "CANCELLED"]) {
       for (const reviewedAt of [null, "2026-11-18"]) {
-        const result = tripDetailPermissions({ status, reviewedAt }, role);
+        const result = tripDetailPermissions({ status, reviewedAt }, { role });
         if (status === "CANCELLED") {
           assert.deepEqual(result, {
             canEdit: false,

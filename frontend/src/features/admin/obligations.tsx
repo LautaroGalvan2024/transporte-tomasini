@@ -1,3 +1,4 @@
+import { remainingMileageLabel } from "../truck-mileage";
 import {
   addMonths,
   obligationFormDefaults,
@@ -966,9 +967,10 @@ export function ObligationsPage({ onNotify }: PageProps) {
                                 : `En ${item.daysRemaining} días`
                             : null,
                           item.kmRemaining !== null
-                            ? item.kmRemaining <= 0
-                              ? `${formatKm(Math.abs(item.kmRemaining))} km sobre el límite`
-                              : `Faltan ${formatKm(item.kmRemaining)} km`
+                            ? remainingMileageLabel(
+                                item.kmRemaining,
+                                Boolean(item.truck?.mileageEstimated),
+                              )
                             : null,
                         ]
                           .filter(Boolean)

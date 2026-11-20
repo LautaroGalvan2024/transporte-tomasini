@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { operationalDistanceEnabled } from "../src/features/trips/operational-distance-enabled.ts";
 import {
   draftMileage,
   emptyValues,
@@ -30,11 +31,76 @@ const context = (overrides = {}) => ({
   baseline: emptyValues(),
   savedTrip: null,
   role: "ADMIN",
+  truckOdometer: 1000,
   evaluateKm: true,
   preview: { calendarToken: "calendar-one" },
   resolveKm100: false,
   mode: { kind: "create", clientRequestId: "request-one" },
   ...overrides,
+});
+
+test("modo inicial por rol y campos exclusivos del alta operativa", () => {
+  assert.equal(
+    emptyValues("DRIVER").mileageMode,
+    operationalDistanceEnabled ? "DISTANCE" : "ODOMETER",
+  );
+  assert.equal(emptyValues("ADMIN").mileageMode, "ODOMETER");
+  for (const role of ["DRIVER", "ADMIN"]) {
+    for (const countForMaintenance of [false, true]) {
+      const values = draft({
+        mileageMode: "DISTANCE",
+        distanceKm: "120",
+        countForMaintenance,
+        initialTruckOdometer: "0",
+      });
+      const operational =
+        operationalDistanceEnabled &&
+        (role === "DRIVER" || countForMaintenance);
+      const preview = tripPreviewRequest(values, emptyValues());
+      assert.ok(
+        !(
+          "initialTruckOdometer" in preview || "countForMaintenance" in preview
+        ),
+      );
+      const body = tripFromDraft(
+        values,
+        context({ role, truckOdometer: null }),
+      );
+      assert.equal(
+        body.countForMaintenance,
+        operational && role === "ADMIN" ? true : undefined,
+      );
+      assert.equal(body.initialTruckOdometer, operational ? 0 : undefined);
+      for (const odometer of [0, 12345]) {
+        const known = tripFromDraft(
+          values,
+          context({ role, truckOdometer: odometer }),
+        );
+        assert.ok(!("initialTruckOdometer" in known));
+      }
+      const edit = tripFromDraft(
+        values,
+        context({
+          role,
+          truckOdometer: null,
+          mode: { kind: "update", version: 2 },
+        }),
+      );
+      assert.ok(
+        !("countForMaintenance" in edit || "initialTruckOdometer" in edit),
+      );
+      const measured = tripFromDraft(
+        { ...values, mileageMode: "ODOMETER" },
+        context({ role, truckOdometer: null }),
+      );
+      assert.ok(
+        !(
+          "countForMaintenance" in measured ||
+          "initialTruckOdometer" in measured
+        ),
+      );
+    }
+  }
 });
 
 test("el alta conserva el JSON, orden, cero y conversiones del formulario", () => {

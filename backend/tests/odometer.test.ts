@@ -7,6 +7,7 @@ import { assertDatabaseScope, disconnect, getDb } from "../src/db.js";
 import { getConfig, validateDatabaseUrl } from "../src/config.js";
 import { hashPassword } from "../src/password.js";
 import { ODOMETER_ADJUSTED } from "../src/odometer.js";
+import { runNotificationJob } from "../src/notifications.js";
 
 const enabled =
   process.env.TOMASINI_INTEGRATION === "1" || process.env.NODE_ENV === "test";
@@ -145,6 +146,194 @@ test(
       });
       assert.equal(obligation.status, 201);
       obligationId = obligation.body.id;
+
+      await t.test(
+        "El mantenimiento y el correo usan las distancias pendientes hasta confirmar una lectura real",
+        async () => {
+          const projected = await db.truck.create({
+            data: {
+              plate: `PM${suffix.toUpperCase()}`,
+              label: "Prueba mantenimiento",
+              initialOdometer: 10000,
+              initialOdometerAt: new Date(date(4)),
+            },
+          });
+          const direct = (
+            from: string,
+            to: string,
+            km: number,
+            source: string | null,
+          ) =>
+            db.trip.create({
+              data: {
+                clientRequestId: randomUUID(),
+                requestHash: "a".repeat(64),
+                driverId: driver.driver!.id,
+                createdById: source === "DRIVER" ? driver.id : admin.id,
+                truckId: projected.id,
+                origin: "Origen de prueba",
+                destination: "Destino de prueba",
+                departureAt: new Date(from),
+                arrivalAt: new Date(to),
+                manualDistanceKm: km,
+                distanceSource: source,
+              },
+            });
+          const url = `/trucks/${projected.id}/odometer`;
+          const snapshot = (truck: {
+            maintenanceKm: number;
+            maintenanceKmAt: string;
+          }) => ({
+            expectedMaintenanceKm: truck.maintenanceKm,
+            expectedMaintenanceKmAt: truck.maintenanceKmAt,
+          });
+          const recipient = `prueba-km-${suffix}@example.invalid`;
+          const original = await db.setting.findUniqueOrThrow({
+            where: { id: "main" },
+          });
+          try {
+            await direct(date(3.8), date(4), 30, "DRIVER");
+            await direct(date(4), date(4.3), 200, "DRIVER");
+            await direct(date(4.4), date(4.6), 777, null);
+            await direct(date(5), date(6), 75, "ADMIN");
+            const control = await post(adminAgent, "/obligations", {
+              title: `Service km estimados ${suffix}`,
+              kind: "SERVICE",
+              truckId: projected.id,
+              dueKm: 10250,
+              warningKm: 100,
+            });
+            assert.equal(control.status, 201, JSON.stringify(control.body));
+            const current = control.body.truck;
+            assert.equal(current.odometer, 10000);
+            assert.equal(current.odometerAt, date(4));
+            assert.equal(current.maintenanceKm, 10275);
+            assert.equal(current.maintenanceKmAt, date(6));
+            assert.equal(current.mileageEstimated, true);
+            assert.equal(control.body.kmRemaining, -25);
+            assert.equal(control.body.status, "OVERDUE");
+
+            await db.setting.update({
+              where: { id: "main" },
+              data: { recipientEmail: recipient },
+            });
+            const noon = new Date(date(8));
+            noon.setUTCHours(16);
+            let email = "";
+            const job = await runNotificationJob({
+              now: noon,
+              configured: true,
+              send: async (message) => {
+                assert.equal(message.to, recipient);
+                email = String(message.text);
+              },
+            });
+            assert.equal(job.sent, 1);
+            assert.ok(email.includes(control.body.title));
+            assert.match(email, /25 km excedidos/);
+            assert.match(
+              email,
+              /Kilometraje estimado para mantenimiento: 10\.275 km/,
+            );
+            assert.match(email, /Última lectura real: 10\.000 km/);
+
+            for (const input of [
+              adjustment(current, 10000),
+              {
+                ...adjustment(current, 10000),
+                ...snapshot(current),
+                expectedMaintenanceKm: 10274,
+              },
+              {
+                ...adjustment(current, 10000),
+                ...snapshot(current),
+                expectedMaintenanceKmAt: date(5),
+              },
+            ]) {
+              const conflict = await patch(adminAgent, url, input);
+              assert.equal(conflict.status, 409);
+              assert.equal(
+                conflict.body.error.code,
+                "ODOMETER_VERSION_CONFLICT",
+              );
+            }
+            const service = (
+              performedAt: string,
+              odometer: number,
+              version: number,
+            ) =>
+              post(adminAgent, `/obligations/${control.body.id}/renewals`, {
+                performedAt,
+                odometer,
+                version,
+                nextDueKm: 11000,
+              });
+            const interior = await service(date(4.1), 10040, 1);
+            assert.equal(interior.status, 409);
+            assert.equal(
+              interior.body.error.code,
+              "OPERATIONAL_READING_BOUNDARY",
+            );
+            const arrival = await service(date(4.3), 10180, 1);
+            assert.equal(arrival.status, 201, JSON.stringify(arrival.body));
+            assert.equal(arrival.body.truck.maintenanceKm, 10255);
+            const departure = await service(
+              date(5),
+              10185,
+              arrival.body.version,
+            );
+            assert.equal(departure.status, 201, JSON.stringify(departure.body));
+            assert.equal(departure.body.truck.maintenanceKm, 10260);
+            const latest = departure.body.truck;
+            const confirmSameReal = await patch(adminAgent, url, {
+              ...adjustment(latest, latest.odometer),
+              ...snapshot(latest),
+            });
+            assert.equal(
+              confirmSameReal.status,
+              200,
+              JSON.stringify(confirmSameReal.body),
+            );
+            assert.equal(confirmSameReal.body.maintenanceKm, 10185);
+            assert.equal(confirmSameReal.body.mileageEstimated, false);
+            assert.ok(confirmSameReal.body.odometerAt > latest.odometerAt);
+            const start = confirmSameReal.body.odometerAt;
+            const end = new Date(
+              Math.max(Date.now(), Date.parse(start) + 1),
+            ).toISOString();
+            await direct(start, end, 80, "DRIVER");
+            const confirmed = await patch(adminAgent, url, {
+              odometer: 10265,
+              expectedOdometer: 10185,
+              expectedOdometerAt: start,
+              expectedMaintenanceKm: 10265,
+              expectedMaintenanceKmAt: end,
+            });
+            assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
+            assert.equal(confirmed.body.maintenanceKm, 10265);
+            assert.equal(confirmed.body.odometer, 10265);
+            assert.equal(
+              confirmed.body.maintenanceKmAt,
+              confirmed.body.odometerAt,
+            );
+            assert.equal(confirmed.body.mileageEstimated, false);
+          } finally {
+            await db.setting.update({
+              where: { id: "main" },
+              data: { recipientEmail: original.recipientEmail },
+            });
+            await db.notification.deleteMany({ where: { recipient } });
+            await db.renewal.deleteMany({
+              where: { obligation: { truckId: projected.id } },
+            });
+            await db.obligation.deleteMany({
+              where: { truckId: projected.id },
+            });
+            await db.trip.deleteMany({ where: { truckId: projected.id } });
+            await db.truck.delete({ where: { id: projected.id } });
+          }
+        },
+      );
 
       await t.test(
         "Solo administración ajusta y da de baja; valores y campos de auditoría se validan",

@@ -1,5 +1,6 @@
-import type { Role, Trip } from "../../types.ts";
+import type { Trip, User } from "../../types.ts";
 import { manualDistanceEnabled } from "./manual-distance-enabled.ts";
+import { operationalDistanceEnabled } from "./operational-distance-enabled.ts";
 
 type TripAuditSnapshot = {
   trailerId?: string | null;
@@ -142,11 +143,18 @@ export function presentTripHistory(
   );
 }
 
-export function tripDetailPermissions(trip: Trip, role: Role) {
+export function tripDetailPermissions(trip: Trip, user: User) {
+  const { role } = user;
+  const ownOperationalDistance =
+    operationalDistanceEnabled &&
+    trip.distanceSource === "DRIVER" &&
+    trip.createdById === user.id &&
+    trip.driverId === user.driverId &&
+    !trip.reviewedAt;
   const canEdit =
     trip.status === "ACTIVE" &&
     (trip.mileageMode === "DISTANCE"
-      ? role === "ADMIN" && manualDistanceEnabled
+      ? (role === "ADMIN" && manualDistanceEnabled) || ownOperationalDistance
       : role === "ADMIN" || !trip.reviewedAt);
   return {
     canEdit,

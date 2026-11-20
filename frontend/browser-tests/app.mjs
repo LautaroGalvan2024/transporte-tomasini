@@ -10,6 +10,9 @@ export const truck = {
   active: true,
   odometer: 100,
   odometerAt: "2026-10-30T12:00:00Z",
+  maintenanceKm: 100,
+  maintenanceKmAt: "2026-10-30T12:00:00Z",
+  mileageEstimated: false,
 };
 export const user = {
   id: "user-fixture",
@@ -48,6 +51,9 @@ export const trips = {
 };
 export const trip = {
   id: "trip-fixture",
+  createdById: user.id,
+  mileageMode: "ODOMETER",
+  distanceSource: null,
   origin: "Rosario",
   destination: "Santa Fe",
   driverId: driver.id,
@@ -150,12 +156,16 @@ export function deferred() {
   return { promise, resolve };
 }
 
-export async function fillTrip(page) {
+export async function fillTripRoute(page) {
   await page.getByLabel(/Acoplado de este viaje/).selectOption("");
   await page.getByPlaceholder("Localidad de salida").fill(trip.origin);
   await page.getByPlaceholder("Localidad de llegada").fill(trip.destination);
   await page.getByLabel(/Fecha y hora de salida/).fill("2026-10-14T09:00");
   await page.getByLabel(/Fecha y hora de llegada/).fill("2026-10-14T10:00");
+}
+
+export async function fillTrip(page) {
+  await fillTripRoute(page);
   await page.getByLabel(/Odómetro al salir/).fill("100");
   const preview = page.waitForResponse(
     (r) => new URL(r.url()).pathname === "/api/trips/km100-preview",

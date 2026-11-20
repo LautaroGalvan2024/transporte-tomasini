@@ -1,10 +1,11 @@
 import { Router, type Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
-import { Prisma } from "@prisma/client";
-import { getDb, lockTrucks, transaction } from "./db.js";
+import { Prisma, type Truck } from "@prisma/client";
+import { getDb, lockTrucks, transaction, type Tx } from "./db.js";
 import { BUSINESS_TIMEZONE } from "./config.js";
 import { currentUser, requireAdmin } from "./auth.js";
-import { ensure } from "./errors.js";
+import { AppError, ensure } from "./errors.js";
+import { ODOMETER_INITIALIZED } from "./odometer.js";
 import {
   tripCreate,
   tripUpdate,
@@ -32,6 +33,7 @@ import {
   audit,
   activeDriver,
   activeTruck,
+  truckDtos,
 } from "./models.js";
 import writeXlsxFile from "write-excel-file/node";
 import { mileageReport, monthlyMileageReport } from "./mileage-report.js";
@@ -96,7 +98,70 @@ async function monthlyTripWhere(
   return { driverId, status: "ACTIVE", departureAt: bounds };
 }
 
-export function tripsRouter(manualDistanceEnabled: boolean) {
+// Called with the truck locked, in the transaction that creates the trip.
+async function ensureOperationalBase(
+  tx: Tx,
+  truck: Pick<Truck, "id" | "initialOdometer">,
+  departureAt: Date,
+  initial: number | undefined,
+  actorId: string,
+) {
+  if (
+    truck.initialOdometer !== null ||
+    (await truckDtos(tx, truck.id))[0].odometer !== null
+  ) {
+    ensure(
+      initial === undefined,
+      409,
+      "El camión ya tiene una lectura real. Actualizá el formulario antes de guardar.",
+      "INITIAL_ODOMETER_CONFLICT",
+    );
+    return;
+  }
+  if (initial === undefined)
+    throw new AppError(
+      400,
+      "Ingresá el odómetro del camión al salir para empezar a calcular los vencimientos.",
+      "INITIAL_ODOMETER_REQUIRED",
+      { initialTruckOdometer: "Ingresá la primera lectura real del camión." },
+    );
+  await tx.truck.update({
+    where: { id: truck.id },
+    data: { initialOdometer: initial, initialOdometerAt: departureAt },
+  });
+  await audit(
+    tx,
+    actorId,
+    "TRUCK",
+    truck.id,
+    ODOMETER_INITIALIZED,
+    { version: 1, odometer: null, odometerAt: null },
+    { version: 1, odometer: initial, odometerAt: departureAt.toISOString() },
+  );
+}
+
+// Removing a reading can leave operational trips without a reference. It
+// cannot introduce an overlapping interval or an out-of-order reading.
+async function checkRemainingTruckReference(tx: Tx, truckId: string) {
+  const dependent = await tx.trip.findFirst({
+    where: { truckId, status: "ACTIVE", distanceSource: { not: null } },
+    select: { id: true },
+  });
+  if (dependent) {
+    const [truck] = await truckDtos(tx, truckId);
+    ensure(
+      truck.odometer !== null,
+      409,
+      "Los viajes que suman kilómetros para mantenimiento necesitan una lectura real del camión.",
+      "ODOMETER_REFERENCE_REQUIRED",
+    );
+  }
+}
+
+export function tripsRouter(
+  manualDistanceEnabled: boolean,
+  operationalDistanceEnabled: boolean,
+) {
   const router = Router();
   const requireEnabledMileage = (manualDistanceKm: number | null) =>
     ensure(
@@ -108,7 +173,10 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
   router.post("/km100-preview", async (req, res) => {
     const input = km100PreviewBody.parse(req.body);
     const data = {
-      ...writeMileage(input, currentUser(req).role === "ADMIN"),
+      ...writeMileage(
+        input,
+        currentUser(req).role === "ADMIN" || operationalDistanceEnabled,
+      ),
       departureAt: new Date(input.departureAt),
       arrivalAt: new Date(input.arrivalAt),
     };
@@ -324,13 +392,37 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
       clientRequestId,
       mileageMode: _mode,
       distanceKm: _distance,
+      countForMaintenance,
+      initialTruckOdometer,
       km100CalendarToken: _calendarToken,
       km100: _km100,
       ...body
     } = input;
+    ensure(
+      countForMaintenance === undefined || user.role === "ADMIN",
+      403,
+      "Solo administración puede elegir cómo se contabilizan sus cargas.",
+    );
+    ensure(
+      countForMaintenance === undefined || input.mileageMode === "DISTANCE",
+      400,
+      "La opción de sumar kilómetros al mantenimiento se usa con kilómetros directos.",
+    );
+    const addsToMaintenance =
+      input.mileageMode === "DISTANCE" &&
+      (user.role === "DRIVER" || countForMaintenance === true);
+    const distanceSource = addsToMaintenance ? user.role : null;
+    ensure(
+      initialTruckOdometer === undefined || distanceSource !== null,
+      400,
+      "La primera lectura del camión solo corresponde a un viaje con kilómetros directos que suma al mantenimiento.",
+    );
     const data = {
       ...body,
-      ...writeMileage(input, user.role === "ADMIN"),
+      // A retry can arrive after the feature was rolled back. Admit writes only
+      // after checking the original request and its current ownership below.
+      ...writeMileage(input, true),
+      distanceSource,
       driverId,
       trailerId: input.trailerId ?? null,
       departureAt: new Date(input.departureAt),
@@ -360,6 +452,7 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
             ? { controlCount: data.controlCount }
             : {}),
           ...(input.km100 != null ? { km100: input.km100 } : {}),
+          ...(distanceSource ? { distanceSource, initialTruckOdometer } : {}),
         }),
       )
       .digest("hex");
@@ -372,6 +465,7 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
       if (existing) {
         ensure(
           existing.createdById === user.id &&
+            (user.role === "ADMIN" || existing.driverId === user.driver?.id) &&
             existing.requestHash === requestHash,
           409,
           "Esta solicitud ya se usó para otro viaje. Recargá el formulario.",
@@ -379,10 +473,25 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
         );
         return { trip: existing, replay: true };
       }
+      if (distanceSource)
+        ensure(
+          operationalDistanceEnabled,
+          user.role === "DRIVER" ? 403 : 409,
+          "La carga de kilómetros directos para mantenimiento todavía no está habilitada.",
+          "OPERATIONAL_DISTANCE_DISABLED",
+        );
       requireEnabledMileage(data.manualDistanceKm);
       await lockTrucks(tx, [data.truckId]);
       await lockTrailers(tx, data.trailerId ? [data.trailerId] : []);
-      await activeTruck(tx, data.truckId);
+      const truck = await activeTruck(tx, data.truckId);
+      if (distanceSource)
+        await ensureOperationalBase(
+          tx,
+          truck,
+          data.departureAt,
+          initialTruckOdometer,
+          user.id,
+        );
       if (data.trailerId) {
         await activeTrailer(tx, data.trailerId);
         await validateTrailerOverlap(
@@ -442,8 +551,21 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
         404,
         "No se encontró el viaje.",
       );
-      const mileage = writeMileage(input, user.role === "ADMIN", old);
+      const mileage = writeMileage(
+        input,
+        user.role === "ADMIN" ||
+          (operationalDistanceEnabled &&
+            old.distanceSource === "DRIVER" &&
+            old.createdById === user.id),
+        old,
+      );
       requireEnabledMileage(mileage.manualDistanceKm);
+      ensure(
+        !old.distanceSource || operationalDistanceEnabled,
+        409,
+        "La corrección de kilómetros directos para mantenimiento todavía no está habilitada.",
+        "OPERATIONAL_DISTANCE_DISABLED",
+      );
       ensure(
         old.status === "ACTIVE",
         409,
@@ -538,7 +660,12 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
         data.arrivalAt,
         id,
       );
-      await validateTruckHistory(tx, data.truckId, { id, ...data }, id);
+      await validateTruckHistory(
+        tx,
+        data.truckId,
+        { id, ...data, distanceSource: old.distanceSource },
+        id,
+      );
       const premium = recalculate
         ? await tripKm100(tx, data, input, {
             keepPending: oldContext?.mode === "PENDING",
@@ -556,6 +683,8 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
         },
         include: tripInclude,
       });
+      if (data.truckId !== old.truckId && old.startKm !== null)
+        await checkRemainingTruckReference(tx, old.truckId);
       await audit(
         tx,
         user.id,
@@ -642,6 +771,8 @@ export function tripsRouter(manualDistanceEnabled: boolean) {
         },
         include: tripInclude,
       });
+      if (old.startKm !== null)
+        await checkRemainingTruckReference(tx, old.truckId);
       await audit(
         tx,
         currentUser(req).id,

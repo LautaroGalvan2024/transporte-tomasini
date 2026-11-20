@@ -72,9 +72,7 @@ export function TripsPage({
     [historyError, setHistoryError] = useState("");
   const historyRequest = useRef(0);
   const historyPages = presentTripHistory(history?.items || [], formatKm);
-  const detailPermissions = detail
-    ? tripDetailPermissions(detail, user.role)
-    : null;
+  const detailPermissions = detail ? tripDetailPermissions(detail, user) : null;
   const notesPages = paginateDetailText(detail?.notes || "");
   const pageSize = useDesktopRows(filters ? 470 : 360);
   useEffect(() => setPage(1), [pageSize]);
@@ -484,6 +482,16 @@ export function TripsPage({
                       <dt>Controles</dt>
                       <dd>{detail.controlCount ?? "Sin informar"}</dd>
                     </div>
+                    {detail.mileageMode === "DISTANCE" && (
+                      <div>
+                        <dt>Kilometraje del camión</dt>
+                        <dd>
+                          {detail.distanceSource
+                            ? `Suma para vencimientos · ${detail.distanceSource === "DRIVER" ? "Chofer" : "Administración"}`
+                            : "Carga histórica de administración"}
+                        </dd>
+                      </div>
+                    )}
                     <div>
                       <dt>Registrado</dt>
                       <dd>{formatDate(detail.createdAt, true)}</dd>

@@ -12,6 +12,8 @@ export const odometerBody = z
     odometer: km,
     expectedOdometer: km.nullable(),
     expectedOdometerAt: instant.nullable(),
+    expectedMaintenanceKm: z.number().int().nonnegative().nullable().optional(),
+    expectedMaintenanceKmAt: instant.nullable().optional(),
   })
   .strict()
   .refine(
@@ -20,6 +22,18 @@ export const odometerBody = z
     {
       message: "La lectura de referencia está incompleta. Actualizá el camión.",
       path: ["expectedOdometerAt"],
+    },
+  )
+  .refine(
+    (value) =>
+      (value.expectedMaintenanceKm === undefined) ===
+        (value.expectedMaintenanceKmAt === undefined) &&
+      (value.expectedMaintenanceKm === null) ===
+        (value.expectedMaintenanceKmAt === null),
+    {
+      message:
+        "La referencia del kilometraje de mantenimiento está incompleta.",
+      path: ["expectedMaintenanceKmAt"],
     },
   );
 
@@ -50,6 +64,33 @@ export async function odometerAdjustments(tx: Tx, truckId: string) {
     select: { after: true },
   });
   return rows.map((row) => adjustmentReading(row.after));
+}
+
+export function validateOperationalHistory(
+  trips: Array<{ departureAt: Date; arrivalAt: Date }>,
+  readings: Array<{ at: Date }>,
+) {
+  if (!trips.length) return;
+  ensure(
+    readings.length > 0,
+    409,
+    "Los viajes que suman kilómetros para mantenimiento necesitan una lectura real del camión.",
+    "ODOMETER_REFERENCE_REQUIRED",
+  );
+  const sorted = [...readings].sort((a, b) => a.at.getTime() - b.at.getTime());
+  let index = 0;
+  for (const trip of [...trips].sort(
+    (a, b) => a.departureAt.getTime() - b.departureAt.getTime(),
+  )) {
+    while (index < sorted.length && sorted[index].at <= trip.departureAt)
+      index++;
+    ensure(
+      index === sorted.length || sorted[index].at >= trip.arrivalAt,
+      409,
+      "Hay una lectura real dentro del horario de un viaje por distancia. Revisá las fechas del viaje y de la lectura.",
+      "OPERATIONAL_READING_BOUNDARY",
+    );
+  }
 }
 
 export function validateAdjustedHistory(

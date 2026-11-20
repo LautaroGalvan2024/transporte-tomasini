@@ -1,0 +1,1 @@
+export const OPERATIONAL_DISTANCE_ENABLED = false;

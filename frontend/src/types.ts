@@ -25,6 +25,9 @@ export interface Truck {
   initialOdometerAt: string | null;
   odometer: number | null;
   odometerAt: string | null;
+  maintenanceKm: number | null;
+  maintenanceKmAt: string | null;
+  mileageEstimated: boolean;
 }
 export interface Trailer {
   id: string;
@@ -62,6 +65,8 @@ export interface Km100Context extends Km100Preview {
 }
 export interface Trip {
   id: string;
+  createdById: string;
+  distanceSource: "DRIVER" | "ADMIN" | null;
   driverId: string;
   truckId: string;
   trailerId: string | null;
