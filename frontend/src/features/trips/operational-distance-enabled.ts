@@ -1,1 +1,1 @@
-export const operationalDistanceEnabled = false;
+export const operationalDistanceEnabled = true;
