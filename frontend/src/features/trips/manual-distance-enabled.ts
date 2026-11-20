@@ -1,1 +1,1 @@
-export const manualDistanceEnabled = false;
+export const manualDistanceEnabled = true;
