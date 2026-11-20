@@ -11,6 +11,18 @@ NAME = re.compile(r'[0-9]{12,14}_[a-z0-9_]{1,90}')
 MODEL = re.compile(r'[A-Z][A-Za-z0-9_]{0,62}')
 FIELD = re.compile(r'[a-z][A-Za-z0-9_]{0,62}')
 TYPES = {'Int': 'INTEGER', 'BigInt': 'BIGINT', 'String': 'TEXT', 'Boolean': 'BOOLEAN'}
+TRIP_DISTANCE_MIGRATION = '202611200001_trip_manual_distance'
+TRIP_DISTANCE_OP = {'op': 'enableTripManualDistance'}
+TRIP_DISTANCE_SQL = '''ALTER TABLE "tomasini"."Trip"
+    ADD COLUMN "manualDistanceKm" INTEGER,
+    ALTER COLUMN "startKm" DROP NOT NULL,
+    ALTER COLUMN "endKm" DROP NOT NULL,
+    ADD CONSTRAINT "Trip_distance_method" CHECK (
+        ("manualDistanceKm" IS NULL AND "startKm" IS NOT NULL AND "endKm" IS NOT NULL)
+        OR ("manualDistanceKm" IS NOT NULL AND "manualDistanceKm" BETWEEN 0 AND 9999999
+            AND "startKm" IS NULL AND "endKm" IS NULL)
+    );
+'''
 
 
 def require(condition, message):
@@ -32,6 +44,8 @@ def render_migration(plan):
             and type(plan['version']) is int and plan['version'] == 1, 'Invalid CI migration plan version.')
     operations = plan['operations']
     require(isinstance(operations, list) and 1 <= len(operations) <= 64, 'Expected 1–64 migration operations.')
+    if operations == [TRIP_DISTANCE_OP]:
+        return TRIP_DISTANCE_SQL
     statements = []
     columns = set()
     for op in operations:
@@ -65,13 +79,14 @@ def prisma_files(root):
     return files
 
 
-def without_added_fields(schema, columns):
+def without_added_fields(schema, columns, *, trip_distance=False):
     """Remove exactly the declared fields, preserving every existing schema token."""
     model = None
     retained = []
     found = set()
     eligible_models = set()
     mapped_models = set()
+    trip_readings = set()
     for line in schema.splitlines():
         stripped = line.strip()
         opening = re.fullmatch(r'model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{', stripped)
@@ -85,6 +100,12 @@ def without_added_fields(schema, columns):
             mapped_models.add(model)
         # Exact two-token field declarations, without defaults, maps or native type overrides.
         parts = stripped.split()
+        if trip_distance and model == 'Trip' and parts[:1] in (['startKm'], ['endKm']):
+            require(len(parts) == 2 and parts[1] == 'Int?' and parts[0] not in trip_readings,
+                    'The trip distance migration requires two optional odometer readings.')
+            trip_readings.add(parts[0])
+            retained.append((parts[0], 'Int'))
+            continue
         if model and len(parts) == 2 and (model, parts[0]) in columns:
             key = (model, parts[0])
             require(key not in found and parts[1] == columns[key] + '?', 'Prisma field differs from CI declaration.')
@@ -94,6 +115,8 @@ def without_added_fields(schema, columns):
         retained.append(tuple(re.findall(r'"(?:[^"\\]|\\.)*"|[^\s"]+', line)))
     require(found == set(columns) and all(table in eligible_models - mapped_models for table, _ in columns),
             'CI migration fields must match existing models in the tomasini schema.')
+    if trip_distance:
+        require(trip_readings == {'startKm', 'endKm'}, 'Incomplete trip odometer schema.')
     return retained
 
 
@@ -113,22 +136,29 @@ def plan_migrations(old, incoming):
     require(current.keys() - previous.keys() == expected, 'Each new migration must contain migration.sql and ci.json.')
     changes = []
     columns = {}
+    trip_distance = False
     for name in names:
         folder = new_root / 'migrations' / name
         plan = read_plan(folder / 'ci.json')
         sql = render_migration(plan)
         require((folder / 'migration.sql').read_bytes() == sql.encode('utf-8'), 'SQL differs from the reviewed CI operations.')
         for op in plan['operations']:
-            key = (op['table'], op['column'])
+            if op == TRIP_DISTANCE_OP:
+                require(name == TRIP_DISTANCE_MIGRATION, 'Unexpected name for trip distance migration.')
+                trip_distance = True
+                key, field_type = ('Trip', 'manualDistanceKm'), 'Int'
+            else:
+                require(name != TRIP_DISTANCE_MIGRATION, 'Unexpected operation in trip distance migration.')
+                key, field_type = (op['table'], op['column']), op['type']
             require(key not in columns, 'The same column appears in multiple migrations.')
-            columns[key] = op['type']
+            columns[key] = field_type
         changes.append({'name': name, 'sha256': current[f'migrations/{name}/migration.sql'],
                         'operations': plan['operations'], 'sql': sql})
     require(len(columns) <= 256 and all((root / 'schema.prisma').stat().st_size <= 1024 * 1024
                                         for root in (old_root, new_root)), 'CI migration exceeds schema limits.')
     old_schema = (old_root / 'schema.prisma').read_text(encoding='utf-8')
     new_schema = (new_root / 'schema.prisma').read_text(encoding='utf-8')
-    require(without_added_fields(old_schema, {}) == without_added_fields(new_schema, columns),
+    require(without_added_fields(old_schema, {}) == without_added_fields(new_schema, columns, trip_distance=trip_distance),
             'The Prisma schema includes changes outside the declared nullable columns.')
     return changes
 

@@ -9,6 +9,8 @@ export type TripFormValues = {
   destination: string;
   departureAt: string;
   arrivalAt: string;
+  mileageMode: Trip["mileageMode"];
+  distanceKm: string;
   startKm: string;
   endKm: string;
   km100: string;
@@ -24,6 +26,8 @@ export const emptyValues = (): TripFormValues => ({
   destination: "",
   departureAt: "",
   arrivalAt: "",
+  mileageMode: "ODOMETER",
+  distanceKm: "",
   startKm: "",
   endKm: "",
   km100: "",
@@ -31,6 +35,30 @@ export const emptyValues = (): TripFormValues => ({
   allowance: "",
   notes: "",
 });
+
+export function draftMileage(values: TripFormValues) {
+  const errors: Record<string, string> = {};
+  const validKm = (value: string) =>
+    /^\d+$/.test(value) && Number(value) <= 9_999_999;
+  if (values.mileageMode === "DISTANCE") {
+    if (!validKm(values.distanceKm))
+      errors.distanceKm =
+        "Ingresá los kilómetros recorridos, entre 0 y 9.999.999.";
+    return {
+      errors,
+      distance: errors.distanceKm ? null : Number(values.distanceKm),
+    };
+  }
+  if (!validKm(values.startKm))
+    errors.startKm = "Ingresá una lectura de salida entre 0 y 9.999.999 km.";
+  if (!validKm(values.endKm))
+    errors.endKm = "Ingresá una lectura de llegada entre 0 y 9.999.999 km.";
+  if (errors.startKm || errors.endKm) return { errors, distance: null };
+  const distance = Number(values.endKm) - Number(values.startKm);
+  if (distance < 0)
+    errors.endKm = "El kilometraje final debe ser igual o mayor al inicial.";
+  return { errors, distance: distance < 0 ? null : distance };
+}
 
 export function tripToDraft(
   trip: Trip,
@@ -44,8 +72,10 @@ export function tripToDraft(
     destination: trip.destination,
     departureAt: localInput(trip.departureAt),
     arrivalAt: localInput(trip.arrivalAt),
-    startKm: String(trip.startKm),
-    endKm: String(trip.endKm),
+    mileageMode: trip.mileageMode,
+    distanceKm: trip.mileageMode === "DISTANCE" ? String(trip.distanceKm) : "",
+    startKm: trip.startKm?.toString() ?? "",
+    endKm: trip.endKm?.toString() ?? "",
     km100: trip.km100?.toString() ?? "",
     controlCount: trip.controlCount?.toString() ?? "",
     allowance: trip.allowance == null ? "" : String(trip.allowance),
@@ -53,7 +83,11 @@ export function tripToDraft(
   };
 }
 
-type TripRequestFields = {
+type MileageInput =
+  | { startKm: number; endKm: number }
+  | { mileageMode: "DISTANCE"; distanceKm: number };
+
+type TripRequestFields = MileageInput & {
   truckId: string;
   trailerId: string | null;
   driverId?: string;
@@ -61,8 +95,6 @@ type TripRequestFields = {
   destination: string;
   departureAt: string;
   arrivalAt: string;
-  startKm: number;
-  endKm: number;
   km100?: number;
   km100CalendarToken?: string;
   km100Resolve?: true;
@@ -82,10 +114,8 @@ export type TripWriteMode =
   | { kind: "create"; clientRequestId: string }
   | { kind: "update"; version: number };
 
-export type TripPreviewRequest = Pick<
-  TripRequestFields,
-  "departureAt" | "arrivalAt" | "startKm" | "endKm"
->;
+export type TripPreviewRequest = MileageInput &
+  Pick<TripRequestFields, "departureAt" | "arrivalAt">;
 
 type StoredTripDates = Pick<Trip, "departureAt" | "arrivalAt">;
 
@@ -105,8 +135,12 @@ export function tripPreviewRequest(
       baseline.arrivalAt,
       savedTrip?.arrivalAt,
     ),
-    startKm: Number(values.startKm),
-    endKm: Number(values.endKm),
+    ...(values.mileageMode === "DISTANCE"
+      ? {
+          mileageMode: "DISTANCE" as const,
+          distanceKm: Number(values.distanceKm),
+        }
+      : { startKm: Number(values.startKm), endKm: Number(values.endKm) }),
   };
 }
 
@@ -123,16 +157,13 @@ export function tripFromDraft(
   },
 ): TripWriteRequest {
   const fields: TripRequestFields = {
-    ...values,
+    truckId: values.truckId,
     trailerId: values.trailerId || null,
+    driverId: context.role === "ADMIN" ? values.driverId : undefined,
     origin: values.origin.trim(),
     destination: values.destination.trim(),
     ...tripPreviewRequest(values, context.baseline, context.savedTrip),
     km100: context.evaluateKm ? Number(values.km100) : undefined,
-    km100CalendarToken: context.evaluateKm
-      ? context.preview?.calendarToken
-      : undefined,
-    ...(context.resolveKm100 ? { km100Resolve: true } : {}),
     controlCount:
       values.controlCount === "" ? null : Number(values.controlCount),
     allowance:
@@ -140,7 +171,10 @@ export function tripFromDraft(
         ? null
         : Number(values.allowance.replace(",", ".")),
     notes: values.notes.trim() || null,
-    ...(context.role === "DRIVER" ? { driverId: undefined } : {}),
+    km100CalendarToken: context.evaluateKm
+      ? context.preview?.calendarToken
+      : undefined,
+    ...(context.resolveKm100 ? { km100Resolve: true } : {}),
   };
   // Every request field is scalar. Freezing this snapshot keeps an ambiguous
   // retry independent of subsequent draft/preview changes, including its UUID.

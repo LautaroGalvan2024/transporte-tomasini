@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "./errors.js";
+import { tripDistance, type TimedTripMileage } from "./trip-mileage.js";
 
 export const HOLIDAY_TIMEZONE = "America/Argentina/Buenos_Aires";
 const daySchema = z
@@ -217,11 +218,11 @@ export type Km100Preview = {
 };
 export function evaluateKm100(
   calendar: HolidayCalendar,
-  trip: { departureAt: Date; arrivalAt: Date; startKm: number; endKm: number },
+  trip: TimedTripMileage,
 ): Km100Preview {
   const start = trip.departureAt.getTime(),
     end = trip.arrivalAt.getTime(),
-    distance = trip.endKm - trip.startKm;
+    distance = tripDistance(trip);
   if (
     !Number.isFinite(start) ||
     !Number.isFinite(end) ||

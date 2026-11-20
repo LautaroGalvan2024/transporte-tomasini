@@ -95,6 +95,7 @@ test("viajes completados rechazan fechas futuras, orden invertido y kilómetros 
     departureAt: new Date("2026-11-01T12:00:00Z"),
     arrivalAt: new Date("2026-11-01T13:00:00Z"),
     startKm: 100,
+    manualDistanceKm: null,
     endKm: 200,
   };
   assert.doesNotThrow(() => validateTripDates(valid, now));

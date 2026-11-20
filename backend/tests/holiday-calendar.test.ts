@@ -288,6 +288,7 @@ test("consulta oficial crea propuesta, no altera activo, token o km guardados", 
     departureAt: new Date("2026-12-24T10:00:00-03:00"),
     arrivalAt: new Date("2026-12-24T11:00:00-03:00"),
     startKm: 0,
+    manualDistanceKm: null,
     endKm: 100,
   };
   const before = evaluateKm100(calendar, trip),

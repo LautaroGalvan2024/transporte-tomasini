@@ -9,8 +9,9 @@ import subprocess
 import sys
 import tempfile
 from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
-from ci_migrations import apply_migrations, plan_migrations, render_migration
+from ci_migrations import TRIP_DISTANCE_MIGRATION, apply_migrations, plan_migrations, render_migration
 
 ROOT = Path(__file__).resolve().parents[1]
 PRISMA = Path('backend/prisma')
@@ -119,6 +120,47 @@ def deploy_prisma(release):
     require(result.returncode == 0, 'Prisma could not deploy the reviewed history on the isolated database.')
 
 
+def prepare_distance_fixture(sql, fixture):
+    # Only run on the freshly provisioned CI test database before the reviewed ALTER.
+    sql(f"""BEGIN;
+        INSERT INTO tomasini."User" (id, username, name, "passwordHash", role, "updatedAt")
+            VALUES ('{fixture}', 'ci-distance-fixture', 'CI fixture', 'disabled', 'DRIVER', now());
+        INSERT INTO tomasini."Driver" (id, "userId") VALUES ('{fixture}', '{fixture}');
+        INSERT INTO tomasini."Truck" (id, plate, label) VALUES ('{fixture}', 'CI-DISTANCE', 'CI fixture');
+        INSERT INTO tomasini."Trip" (id, "clientRequestId", "requestHash", "createdById", "driverId",
+            "truckId", origin, destination, "departureAt", "arrivalAt", "startKm", "endKm", "updatedAt")
+            VALUES ('{fixture}', '{fixture}', repeat('a',64), '{fixture}', '{fixture}', '{fixture}',
+                    'CI origin', 'CI destination', now() - interval '2 days', now() - interval '1 day', 350, 417, now());
+        COMMIT;""")
+    return sql(f"""SELECT to_jsonb(t)::text FROM tomasini."Trip" t WHERE id='{fixture}';""")
+
+
+def check_distance_fixture(sql, fixture, old_row):
+    row = sql(f"""SELECT (to_jsonb(t) - 'manualDistanceKm')::text FROM tomasini."Trip" t
+                  WHERE id='{fixture}' AND "manualDistanceKm" IS NULL;""")
+    require(row == old_row and row, 'The trip migration changed recorded fields.')
+    sql(f"""BEGIN;
+        DO $$ DECLARE s integer; e integer; d integer;
+        BEGIN
+            FOR s,e,d IN VALUES (NULL::int,NULL::int,NULL::int),(0,NULL,NULL),(NULL,0,NULL),(0,0,0),
+                                 (NULL,0,0),(0,NULL,0),(NULL,NULL,-1),(NULL,NULL,10000000),(5,3,NULL)
+            LOOP
+                BEGIN
+                    UPDATE tomasini."Trip" SET "startKm"=s, "endKm"=e, "manualDistanceKm"=d WHERE id='{fixture}';
+                    RAISE EXCEPTION 'A trip with inconsistent mileage was accepted';
+                EXCEPTION WHEN check_violation THEN NULL;
+                END;
+            END LOOP;
+        END $$;
+        UPDATE tomasini."Trip" SET "startKm"=NULL, "endKm"=NULL, "manualDistanceKm"=0 WHERE id='{fixture}';
+        UPDATE tomasini."Trip" SET "manualDistanceKm"=9999999 WHERE id='{fixture}';
+        DELETE FROM tomasini."Trip" WHERE id='{fixture}';
+        DELETE FROM tomasini."Driver" WHERE id='{fixture}';
+        DELETE FROM tomasini."User" WHERE id='{fixture}';
+        DELETE FROM tomasini."Truck" WHERE id='{fixture}';
+        COMMIT;""")
+
+
 def upgrade(scratch):
     previous, pending = validate_transition(comparison_base(), scratch)
     sql = test_connection('MIGRATION_DATABASE_URL')
@@ -127,8 +169,13 @@ def upgrade(scratch):
     deploy_prisma(previous)
     history = migration_history(previous)
     verify_ledger(sql, history)
+    fixture = uuid4() if any(p['name'] == TRIP_DISTANCE_MIGRATION for p in pending) else None
+    if fixture:
+        old_row = prepare_distance_fixture(sql, fixture)
     if pending:
         apply_migrations(sql, history, pending, database='tomasini_test')
+    if fixture:
+        check_distance_fixture(sql, fixture, old_row)
     verify_ledger(sql, migration_history(ROOT))
     print(f'Migration review passed. Tested {len(pending)} pending migrations against the previous release.')
 

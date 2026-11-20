@@ -22,6 +22,23 @@ repair_spec.loader.exec_module(repair)
 
 
 class CiDeployTests(unittest.TestCase):
+    def test_trip_rollback_requires_compatible_rows_only_when_crossing_schema_change(self):
+        core, update = Mock(), Mock()
+        declared = [{'operations': [{'op': 'enableTripManualDistance'}]}]
+        core.dbsql.side_effect = RuntimeError('record with null odometer')
+        with self.assertRaisesRegex(RuntimeError, 'null odometer'):
+            ci.restore_release(core, update, 'old', 'reader', declared)
+        self.assertEqual([call.args[0][1] for call in core.run.call_args_list], ['stop', 'start'])
+        update.switch_release.assert_not_called()
+        self.assertIn('"endKm" IS NULL', core.dbsql.call_args.args[0])
+        core.dbsql.side_effect = None
+        ci.restore_release(core, update, 'old', 'reader', declared)
+        update.switch_release.assert_called_once_with('old', 'reader')
+        core.dbsql.reset_mock()
+        ci.restore_release(core, update, 'reader', 'writer', [])
+        update.switch_release.assert_called_with('reader', 'writer')
+        core.dbsql.assert_not_called()
+
     def test_recovery_accepts_only_clean_pre_access_failure(self):
         good = {'status': 'needs_review', 'keyDisabled': True, 'sudoRuleRemoved': True, 'cleanupIssues': []}
         repair.validate_failure(good)

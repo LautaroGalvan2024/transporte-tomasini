@@ -18,6 +18,11 @@ import {
 import { getCalendar } from "./holiday-calendar.js";
 import { evaluateKm100, parseKm100Context } from "./holiday-domain.js";
 import { tripKm100 } from "./trip-km100.js";
+import {
+  tripDistance,
+  totalTripDistance,
+  writeMileage,
+} from "./trip-mileage.js";
 import { dayStart, dayAfter, validateTripDates } from "./domain.js";
 import {
   tripInclude,
@@ -91,15 +96,23 @@ async function monthlyTripWhere(
   return { driverId, status: "ACTIVE", departureAt: bounds };
 }
 
-export function tripsRouter() {
+export function tripsRouter(manualDistanceEnabled: boolean) {
   const router = Router();
+  const requireEnabledMileage = (manualDistanceKm: number | null) =>
+    ensure(
+      manualDistanceKm === null || manualDistanceEnabled,
+      409,
+      "La carga con kilómetros directos todavía no está habilitada.",
+      "MANUAL_DISTANCE_DISABLED",
+    );
   router.post("/km100-preview", async (req, res) => {
     const input = km100PreviewBody.parse(req.body);
     const data = {
-      ...input,
+      ...writeMileage(input, currentUser(req).role === "ADMIN"),
       departureAt: new Date(input.departureAt),
       arrivalAt: new Date(input.arrivalAt),
     };
+    requireEnabledMileage(data.manualDistanceKm);
     validateTripDates(data);
     res.json(evaluateKm100(await getCalendar(), data));
   });
@@ -118,7 +131,12 @@ export function tripsRouter() {
           tx.trip.count({ where }),
           tx.trip.aggregate({
             where,
-            _sum: { endKm: true, startKm: true, allowance: true },
+            _sum: {
+              endKm: true,
+              startKm: true,
+              manualDistanceKm: true,
+              allowance: true,
+            },
           }),
         ]);
         return {
@@ -128,7 +146,7 @@ export function tripsRouter() {
           pageSize: input.pageSize,
           totals: {
             count: total,
-            distanceKm: (sums._sum.endKm ?? 0) - (sums._sum.startKm ?? 0),
+            distanceKm: totalTripDistance(sums._sum),
             allowance: sums._sum.allowance?.toFixed(2) ?? "0.00",
           },
         };
@@ -160,6 +178,7 @@ export function tripsRouter() {
         arrivalAt: true,
         startKm: true,
         endKm: true,
+        manualDistanceKm: true,
         controlCount: true,
         km100: true,
         km100Context: true,
@@ -240,7 +259,7 @@ export function tripsRouter() {
           row.destination,
           row.startKm,
           row.endKm,
-          row.endKm - row.startKm,
+          tripDistance(row),
           row.allowance === null ? null : Number(row.allowance),
           row.reviewedAt ? "Revisado" : "Pendiente",
           row.notes,
@@ -303,12 +322,15 @@ export function tripsRouter() {
     ensure(driverId, 400, "Seleccioná el chofer.");
     const {
       clientRequestId,
+      mileageMode: _mode,
+      distanceKm: _distance,
       km100CalendarToken: _calendarToken,
       km100: _km100,
       ...body
     } = input;
     const data = {
       ...body,
+      ...writeMileage(input, user.role === "ADMIN"),
       driverId,
       trailerId: input.trailerId ?? null,
       departureAt: new Date(input.departureAt),
@@ -326,8 +348,9 @@ export function tripsRouter() {
           destination: data.destination,
           departureAt: data.departureAt.toISOString(),
           arrivalAt: data.arrivalAt.toISOString(),
-          startKm: data.startKm,
-          endKm: data.endKm,
+          ...(data.manualDistanceKm === null
+            ? { startKm: data.startKm, endKm: data.endKm }
+            : { mileageMode: "DISTANCE", distanceKm: data.manualDistanceKm }),
           allowance: data.allowance,
           notes: data.notes,
           // Null/omitted keeps the pre-trailer hash, including property order.
@@ -356,6 +379,7 @@ export function tripsRouter() {
         );
         return { trip: existing, replay: true };
       }
+      requireEnabledMileage(data.manualDistanceKm);
       await lockTrucks(tx, [data.truckId]);
       await lockTrailers(tx, data.trailerId ? [data.trailerId] : []);
       await activeTruck(tx, data.truckId);
@@ -418,6 +442,8 @@ export function tripsRouter() {
         404,
         "No se encontró el viaje.",
       );
+      const mileage = writeMileage(input, user.role === "ADMIN", old);
+      requireEnabledMileage(mileage.manualDistanceKm);
       ensure(
         old.status === "ACTIVE",
         409,
@@ -446,6 +472,8 @@ export function tripsRouter() {
         km100: _km100,
         km100CalendarToken: _calendarToken,
         km100Resolve: _resolve,
+        mileageMode: _mode,
+        distanceKm: _distance,
         ...fields
       } = input;
       const data = {
@@ -458,8 +486,7 @@ export function tripsRouter() {
           ? new Date(input.departureAt)
           : old.departureAt,
         arrivalAt: input.arrivalAt ? new Date(input.arrivalAt) : old.arrivalAt,
-        startKm: input.startKm ?? old.startKm,
-        endKm: input.endKm ?? old.endKm,
+        ...mileage,
       };
       validateTripDates(data);
       const oldContext = parseKm100Context(old.km100Context);
@@ -481,6 +508,7 @@ export function tripsRouter() {
           data.arrivalAt.getTime() !== old.arrivalAt.getTime() ||
           data.startKm !== old.startKm ||
           data.endKm !== old.endKm ||
+          data.manualDistanceKm !== old.manualDistanceKm ||
           input.km100 !== undefined ||
           input.km100Resolve);
       await lockTrucks(tx, [old.truckId, data.truckId]);

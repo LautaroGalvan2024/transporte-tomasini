@@ -1,5 +1,6 @@
 import { AppError, ensure } from "./errors.js";
 import { BUSINESS_TIMEZONE } from "./config.js";
+import { tripDistance, type TimedTripMileage } from "./trip-mileage.js";
 
 export function businessDay(date = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -94,12 +95,10 @@ export function validateReadings(readings: Reading[]) {
     }
   }
 }
-export function validateTripDates(
-  data: { departureAt: Date; arrivalAt: Date; startKm: number; endKm: number },
-  now = new Date(),
-) {
+export function validateTripDates(data: TimedTripMileage, now = new Date()) {
+  const distance = tripDistance(data);
   ensure(
-    data.endKm >= data.startKm,
+    distance >= 0,
     400,
     "El kilometraje final debe ser igual o mayor al inicial.",
     "ODOMETER_RANGE",
@@ -117,7 +116,7 @@ export function validateTripDates(
     "FUTURE_TRIP",
   );
   ensure(
-    data.arrivalAt > data.departureAt || data.endKm === data.startKm,
+    data.arrivalAt > data.departureAt || distance === 0,
     400,
     "Un viaje con kilómetros recorridos debe tener una llegada posterior a la salida.",
     "DATE_RANGE",

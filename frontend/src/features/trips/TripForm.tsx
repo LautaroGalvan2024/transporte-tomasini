@@ -33,6 +33,7 @@ import {
 import { useData } from "../../useData";
 
 import {
+  draftMileage,
   emptyValues,
   tripToDraft,
   reuseTripAttempt,
@@ -45,6 +46,17 @@ import {
 } from "./trip-draft";
 import { useKm100Preview } from "./useKm100Preview";
 import { Km100Summary } from "./TripSummary";
+import { manualDistanceEnabled } from "./manual-distance-enabled";
+import { tripDetailPermissions } from "./trip-history";
+
+const previewFields = [
+  "departureAt",
+  "arrivalAt",
+  "mileageMode",
+  "startKm",
+  "endKm",
+  "distanceKm",
+] as const;
 
 export function TripForm({
   user,
@@ -98,13 +110,11 @@ export function TripForm({
     requestId = useRef(crypto.randomUUID()),
     submitting = useRef(false),
     errorRef = useRef<HTMLDivElement>(null);
-  const set = (field: keyof TripFormValues, value: string) => {
-    const changesKmInputs = [
-      "departureAt",
-      "arrivalAt",
-      "startKm",
-      "endKm",
-    ].includes(field);
+  const set = <K extends keyof TripFormValues>(
+    field: K,
+    value: TripFormValues[K],
+  ) => {
+    const changesKmInputs = previewFields.some((name) => name === field);
     const invalidateKm =
       changesKmInputs &&
       values[field] !== value &&
@@ -117,7 +127,13 @@ export function TripForm({
       [field]: value,
       ...(invalidateKm ? { km100: "" } : {}),
     }));
-    setFields((f) => ({ ...f, [field]: "" }));
+    setFields((f) => ({
+      ...f,
+      [field]: "",
+      ...(field === "mileageMode"
+        ? { startKm: "", endKm: "", distanceKm: "", km100: "" }
+        : {}),
+    }));
   };
   const suggestedTrailer = (truckId: string) =>
     trailers?.items.find((t) => t.active && t.assignedTruckId === truckId)
@@ -192,15 +208,13 @@ export function TripForm({
     window.addEventListener("beforeunload", stop);
     return () => window.removeEventListener("beforeunload", stop);
   }, [changed, success]);
-  const truck = trucks?.items.find((t) => t.id === values.truckId),
-    km =
-      values.startKm !== "" && values.endKm !== ""
-        ? Number(values.endKm) - Number(values.startKm)
-        : null;
+  const truck = trucks?.items.find((t) => t.id === values.truckId);
+  const directDistance = values.mileageMode === "DISTANCE";
+  const { distance: km, errors: mileageErrors } = draftMileage(values);
   const legacyKm100 = Boolean(tripId && savedTrip && !savedTrip.km100Context);
-  const kmInputsChanged = (
-    ["departureAt", "arrivalAt", "startKm", "endKm"] as const
-  ).some((field) => values[field] !== baseline.current[field]);
+  const kmInputsChanged = previewFields.some(
+    (field) => values[field] !== baseline.current[field],
+  );
   const evaluateKm =
     !tripId ||
     Boolean(
@@ -208,22 +222,14 @@ export function TripForm({
       !legacyKm100 &&
       (kmInputsChanged || kmEditing || resolveKm100),
     );
-  const kmInputKey = JSON.stringify([
-    values.departureAt,
-    values.arrivalAt,
-    values.startKm,
-    values.endKm,
-  ]);
+  const kmInputKey = JSON.stringify(
+    previewFields.map((field) => values[field]),
+  );
   const validKmInputs = Boolean(
     values.departureAt &&
     values.arrivalAt &&
     values.arrivalAt >= values.departureAt &&
-    /^\d+$/.test(values.startKm) &&
-    /^\d+$/.test(values.endKm) &&
-    km !== null &&
-    km >= 0 &&
-    Number(values.startKm) <= 9_999_999 &&
-    Number(values.endKm) <= 9_999_999,
+    km !== null,
   );
   const {
     currentPreview,
@@ -259,7 +265,7 @@ export function TripForm({
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (submitting.current) return;
-    const invalid: Record<string, string> = {};
+    const invalid: Record<string, string> = { ...mileageErrors };
     if (!values.truckId) invalid.truckId = "Elegí el camión de este viaje.";
     if (!trailerConfirmed)
       invalid.trailerId = "Confirmá el acoplado usado o elegí Sin acoplado.";
@@ -276,13 +282,6 @@ export function TripForm({
       values.arrivalAt < values.departureAt
     )
       invalid.arrivalAt = "La llegada debe ser posterior a la salida.";
-    if (!/^\d+$/.test(values.startKm))
-      invalid.startKm =
-        "Ingresá los kilómetros que marcaba el camión al salir.";
-    if (!/^\d+$/.test(values.endKm))
-      invalid.endKm = "Ingresá los kilómetros que marcaba al llegar.";
-    if (km !== null && km < 0)
-      invalid.endKm = "El kilometraje final debe ser igual o mayor al inicial.";
     if (!pendingBody && evaluateKm && validKmInputs) {
       if (!currentPreview || kmPreviewBusy || kmPreviewError) {
         invalid.km100 =
@@ -384,6 +383,15 @@ export function TripForm({
     return <Loading label="Preparando la carga…" />;
   }
   if (loadError) return <ErrorState message={loadError} onRetry={onCancel} />;
+  if (savedTrip && !tripDetailPermissions(savedTrip, user.role).canEdit)
+    return (
+      <div className="workspace-page">
+        <p>Este viaje está disponible para consulta.</p>
+        <button className="button secondary" onClick={onCancel}>
+          Volver al historial
+        </button>
+      </div>
+    );
   if (success)
     return (
       <section className="saved-trip">
@@ -636,65 +644,101 @@ export function TripForm({
           </section>
           <section className="trip-km-block">
             <h2>Kilómetros y controles</h2>
-            {truck && (
-              <div className="odometer-reference">
-                <Info size={18} />
-                <span>
-                  {truck.odometer === null ? (
-                    <>
-                      <strong>Kilometraje pendiente</strong>
-                      <small>
-                        Ingresá la lectura real al salir y al llegar.
-                      </small>
-                    </>
-                  ) : (
-                    <>
-                      Última lectura:{" "}
-                      <strong>{formatKm(truck.odometer)} km</strong>
-                      <small>{formatDate(truck.odometerAt)}</small>
-                    </>
-                  )}
-                </span>
-              </div>
+            {user.role === "ADMIN" && !tripId && manualDistanceEnabled && (
+              <Field label="Cómo cargar los kilómetros">
+                <select
+                  aria-label="Cómo cargar los kilómetros"
+                  value={values.mileageMode}
+                  onChange={(e) =>
+                    set(
+                      "mileageMode",
+                      e.target.value === "DISTANCE" ? "DISTANCE" : "ODOMETER",
+                    )
+                  }
+                  disabled={blocked}
+                >
+                  <option value="ODOMETER">Con odómetros</option>
+                  <option value="DISTANCE">Solo kilómetros recorridos</option>
+                </select>
+              </Field>
             )}
-            <div className="grid2">
-              <Field label="Odómetro al salir" error={fields.startKm}>
+            {directDistance ? (
+              <Field label="Kilómetros recorridos" error={fields.distanceKm}>
                 <span className="input-suffix">
                   <input
                     inputMode="numeric"
                     pattern="[0-9]*"
-                    placeholder="Ej. 125000"
-                    value={values.startKm}
-                    onChange={(e) => set("startKm", e.target.value)}
+                    placeholder="Ej. 350"
+                    value={values.distanceKm}
+                    onChange={(e) => set("distanceKm", e.target.value)}
                     disabled={blocked}
                   />
                   <span>km</span>
                 </span>
               </Field>
-              <Field label="Odómetro al llegar" error={fields.endKm}>
-                <span className="input-suffix">
-                  <input
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    placeholder="Ej. 125350"
-                    value={values.endKm}
-                    onChange={(e) => set("endKm", e.target.value)}
-                    disabled={blocked}
-                  />
-                  <span>km</span>
-                </span>
-              </Field>
-            </div>
-            <div
-              className={`calculated-distance ${km !== null && km >= 0 ? "has-distance" : ""}`}
-              aria-live="polite"
-            >
-              <span>Distancia</span>
-              <strong>
-                {km !== null && km >= 0 ? formatKm(km) : "—"}
-                <small> km</small>
-              </strong>
-            </div>
+            ) : (
+              <>
+                {truck && (
+                  <div className="odometer-reference">
+                    <Info size={18} />
+                    <span>
+                      {truck.odometer === null ? (
+                        <>
+                          <strong>Kilometraje pendiente</strong>
+                          <small>
+                            Ingresá la lectura real al salir y al llegar.
+                          </small>
+                        </>
+                      ) : (
+                        <>
+                          Última lectura:{" "}
+                          <strong>{formatKm(truck.odometer)} km</strong>
+                          <small>{formatDate(truck.odometerAt)}</small>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                )}
+                <div className="grid2">
+                  <Field label="Odómetro al salir" error={fields.startKm}>
+                    <span className="input-suffix">
+                      <input
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="Ej. 125000"
+                        value={values.startKm}
+                        onChange={(e) => set("startKm", e.target.value)}
+                        disabled={blocked}
+                      />
+                      <span>km</span>
+                    </span>
+                  </Field>
+                  <Field label="Odómetro al llegar" error={fields.endKm}>
+                    <span className="input-suffix">
+                      <input
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="Ej. 125350"
+                        value={values.endKm}
+                        onChange={(e) => set("endKm", e.target.value)}
+                        disabled={blocked}
+                      />
+                      <span>km</span>
+                    </span>
+                  </Field>
+                </div>
+                <div
+                  className={`calculated-distance ${km !== null && km >= 0 ? "has-distance" : ""}`}
+                  aria-live="polite"
+                >
+                  <span>Distancia</span>
+                  <strong>
+                    {km !== null && km >= 0 ? formatKm(km) : "—"}
+                    <small> km</small>
+                  </strong>
+                </div>
+              </>
+            )}
             <section className="trip-km100" aria-label="Kilómetros al 100%">
               <div className="trip-km100-heading">
                 <Clock3 size={18} aria-hidden="true" />
@@ -720,7 +764,8 @@ export function TripForm({
                 <>
                   {!validKmInputs && (
                     <p className="trip-km100-help">
-                      Completá las fechas, los horarios y los odómetros para
+                      Completá las fechas, los horarios y{" "}
+                      {directDistance ? "la distancia" : "los odómetros"} para
                       comprobar qué parte corresponde.
                     </p>
                   )}

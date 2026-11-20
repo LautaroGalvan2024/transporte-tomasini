@@ -75,6 +75,24 @@ class ReceiverUpgradeTests(unittest.TestCase):
         self.assertEqual(self.module_path.read_bytes(), b'unrelated')
         self.assertEqual(self.receiver_path.read_bytes(), self.old)
 
+    def test_additive_upgrade_introduces_rollback_guard_before_new_module(self):
+        old_receiver, old_module = b'# additive receiver\n', b'# additive module\n'
+        self.receiver_path.write_bytes(old_receiver)
+        self.module_path.write_bytes(old_module)
+        self.enterContext(patch.object(upgrade, 'ADDITIVE_RECEIVER_SHA', upgrade.digest(old_receiver)))
+        self.enterContext(patch.object(upgrade, 'ADDITIVE_MODULE_SHA', upgrade.digest(old_module)))
+        self.probe.side_effect = subprocess.SubprocessError()
+        with patch.object(upgrade.os, 'replace', wraps=upgrade.os.replace) as replace, self.assertRaises(subprocess.SubprocessError):
+            upgrade.install(self.source, self.ops, self.expected)
+        self.assertEqual([args.args[1] for args in replace.call_args_list], [
+            self.receiver_path, self.module_path, self.module_path, self.receiver_path])
+        self.assertEqual(self.receiver_path.read_bytes(), old_receiver)
+        self.assertEqual(self.module_path.read_bytes(), old_module)
+        self.probe.side_effect = None
+        self.receiver_path.write_bytes(self.new)  # Interrupted after the guard was installed.
+        upgrade.install(self.source, self.ops, self.expected)
+        self.assertEqual(self.module_path.read_bytes(), self.module)
+
 
 class TrustedFilesTests(unittest.TestCase):
     def test_link_owner_or_writable_file_is_rejected(self):

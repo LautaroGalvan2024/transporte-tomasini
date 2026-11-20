@@ -71,6 +71,30 @@ class CiMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'existing'):
             migrations.plan_migrations(self.old, self.new)
 
+    def test_manual_distance_requires_exact_operation_name_sql_and_schema_transition(self):
+        self.schema = self.schema.replace('  @@schema', '  startKm Int\n  endKm Int\n  @@schema')
+        (self.old / self.prisma / 'schema.prisma').write_text(self.schema)
+        self.folder = self.folder.parent / migrations.TRIP_DISTANCE_MIGRATION
+        self.plan['operations'] = [migrations.TRIP_DISTANCE_OP]
+        self.prepare()
+        valid = self.schema.replace('startKm Int', 'startKm Int?').replace('endKm Int', 'endKm Int?\n  manualDistanceKm Int?')
+        schema_file = self.new / self.prisma / 'schema.prisma'
+        schema_file.write_text(valid)
+        changes = migrations.plan_migrations(self.old, self.new)
+        self.assertEqual(changes[0]['sql'], migrations.TRIP_DISTANCE_SQL)
+        for invalid in [valid.replace('endKm Int?', 'endKm Int'), valid.replace('id Int @id', 'id BigInt @id'),
+                        valid.replace('manualDistanceKm Int?', 'manualDistanceKm Int? @default(0)')]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                schema_file.write_text(invalid)
+                migrations.plan_migrations(self.old, self.new)
+        schema_file.write_text(valid)
+        self.folder.rename(self.folder.parent / self.name)
+        with self.assertRaisesRegex(ValueError, 'Unexpected name'):
+            migrations.plan_migrations(self.old, self.new)
+        for ops in [[migrations.TRIP_DISTANCE_OP | {'table': 'Truck'}], [migrations.TRIP_DISTANCE_OP, self.operation]]:
+            with self.subTest(ops=ops), self.assertRaises(ValueError):
+                migrations.render_migration({'version': 1, 'operations': ops})
+
     def test_operation_fields_cannot_inject_sql_or_psql_commands(self):
         for key, value in [('op', 'runSql'), ('column', 'a"; DROP TABLE a; --'), ('table', '_prisma_migrations'),
                            ('type', 'integer; RESET ROLE;'), ('column', 'a\n\\!id'), ('table', 'Trip.Name'),

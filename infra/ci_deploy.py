@@ -359,6 +359,30 @@ def freeze_copy(build, release):
                 os.chmod(path, 0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644)
 
 
+def restore_release(core, update, old, release, declared):
+    # Compare the two release histories, including a transition whose SQL was
+    # already committed by an earlier deployment attempt.
+    crossed_trip_change = any(entry['operations'] == [{'op': 'enableTripManualDistance'}] for entry in declared)
+    if crossed_trip_change:
+        core.run(['systemctl', 'stop', 'tomasini.service'], label='Pausar escrituras de Tomasini antes de verificar compatibilidad')
+        try:
+            core.dbsql("""BEGIN READ ONLY;
+SET LOCAL ROLE tomasini_prod_app;
+DO $$ BEGIN
+  IF current_database() <> 'tomasini_prod' OR current_user <> 'tomasini_prod_app'
+     OR EXISTS (SELECT 1 FROM tomasini."Trip" WHERE "startKm" IS NULL OR "endKm" IS NULL) THEN
+    RAISE EXCEPTION 'The previous release cannot read this trip history';
+  END IF;
+END $$;
+COMMIT;""")
+        except BaseException:
+            core.run(['systemctl', 'start', 'tomasini.service'], label='Conservar la versión compatible de Tomasini')
+            raise
+    update.switch_release(old, release)
+    core.run(['systemctl', 'restart', 'tomasini.service'], label='Restituir solo código anterior Tomasini')
+    update.verify_tomasini()
+
+
 def deploy_root(stream):
     global DIAGNOSTIC_DIRECTORY
     require(os.geteuid() == 0 and os.environ.get('SUDO_USER') == CI_USER, 'Dedicated sudo identity required.')
@@ -450,9 +474,7 @@ def deploy_root(stream):
             rollback = False
             if switched:
                 try:
-                    update.switch_release(old, release)
-                    core.run(['systemctl', 'restart', 'tomasini.service'], label='Restituir solo código anterior Tomasini')
-                    update.verify_tomasini()
+                    restore_release(core, update, old, release, declared)
                     rollback = True
                 except Exception:
                     pass

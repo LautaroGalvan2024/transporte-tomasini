@@ -7,7 +7,7 @@ import {
   type MileageTrip,
 } from "../src/mileage-report.js";
 
-const trip: MileageTrip = {
+const trip = {
   driverId: "driver-a",
   truckId: "truck-a",
   driver: { user: { name: "Chofer / de prueba" } },
@@ -17,9 +17,10 @@ const trip: MileageTrip = {
   origin: "=1+2",
   destination: "Destino",
   startKm: 1200,
+  manualDistanceKm: null,
   endKm: 1372,
   controlCount: 0,
-};
+} satisfies MileageTrip;
 
 test("el CUIL opcional se imprime como texto en el encabezado de ambas planillas", async () => {
   for (const report of [mileageReport, monthlyMileageReport]) {
